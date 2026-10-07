@@ -186,6 +186,10 @@ class Store:
             for path, uid, gcal_event_id, calendar_id, synced, spec in rows
         ]
 
+    def event_counts(self) -> dict[str, int]:
+        """Number of tracked events per source."""
+        return dict(self._db.execute("SELECT source, COUNT(*) FROM events GROUP BY source").fetchall())
+
     # --- issues ---
 
     def set_issues(self, source: str, path: str, kind: str, issues: list[tuple[str | None, str]]) -> None:

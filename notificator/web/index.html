@@ -79,6 +79,7 @@
         </div>
         <div id="headline">Загрузка…</div>
         <div id="status-line" class="muted"></div>
+        <div id="inactive-sources" class="muted hidden"></div>
         <div id="status-error" class="hidden"></div>
     </section>
 
@@ -205,6 +206,14 @@ function renderStatus(s) {
     else if (s.secondsUntilNextCycle !== null) parts.push(`следующий через ${s.secondsUntilNextCycle} с`);
     $('status-line').textContent = parts.join(' · ');
     $('sync-now').disabled = s.running;
+
+    const inactive = Object.entries(s.inactiveSources);
+    $('inactive-sources').classList.toggle('hidden', !inactive.length);
+    $('inactive-sources').textContent = inactive.length
+        ? 'В календаре остаются события неактивных источников ('
+            + inactive.map(([name, count]) => `${name}: ${count}`).join(', ')
+            + ') — они не обновляются и не удаляются, пока источник не активен.'
+        : '';
 
     const error = s.lastCycle?.error;
     $('status-error').classList.toggle('hidden', !error);

@@ -68,6 +68,7 @@ def create_app(
             last = next(iter(db.cycles(1)), None)
             issues = db.issues(source)
             events = db.events(source)
+            counts_by_source = db.event_counts()
         held = sum(i.kind == "held" for i in issues)
         if last is None:
             state = "starting"
@@ -91,6 +92,8 @@ def create_app(
                 "issues": len(issues) - held,
                 "heldDeletes": held,
             },
+            # Events of sources that are not active: still in the calendar, no longer kept up to date.
+            "inactiveSources": {name: n for name, n in counts_by_source.items() if name != source},
             "googleSignedIn": auth.is_signed_in(),
             "defaultCalendar": config.default_calendar,
         }
