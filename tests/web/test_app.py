@@ -69,19 +69,28 @@ def test_status_and_events_after_a_clean_cycle(world):
     assert shown["start"] == "2030-01-01T10:00:00+04:00"
 
 
-def test_events_left_by_an_inactive_source_are_reported(world, tmp_path):
-    world.source.files["/a.md"] = event("u1", "Active")
-    world.service.run_cycle()
-    assert world.status()["inactiveSources"] == {}
-
+def test_events_of_the_previous_source_are_shown_until_their_removal_is_approved(world, tmp_path):
     old_source = FakeSource()
-    old_source.files["/b.md"] = event("u1", "Left behind") + event("u2", "Also left")
+    for i in range(10):
+        old_source.files[f"/{i}.md"] = event("u1", f"Old {i}")
     previous = Config.model_validate({**CONFIG.model_dump(mode="json"), "active_source": "old",
                                       "sources": {"old": {"type": "local", "roots": ["."]}}})
     SyncService(previous, tmp_path, source=old_source, calendar_factory=lambda: world.calendar).run_cycle()
+    world.source.files["/a.md"] = event("u1", "Active")
 
-    assert world.status()["inactiveSources"] == {"old": 2}
-    assert world.status()["counts"]["events"] == 1
+    world.service.run_cycle()
+
+    status = world.status()
+    assert status["inactiveSources"] == {"old": 10}
+    assert (status["state"], status["counts"]["events"], status["counts"]["heldDeletes"]) == ("attention", 1, 10)
+    assert {i["source"] for i in world.client.get("/api/issues").json()} == {"old"}
+
+    world.client.post("/api/deletions/approve")
+    world.service.run_cycle()
+
+    assert world.status()["inactiveSources"] == {}
+    assert world.status()["state"] == "ok"
+    assert world.calendar.summaries() == ["Active"]
 
 
 def test_cycle_failure_is_the_headline_state(world):

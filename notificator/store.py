@@ -154,6 +154,24 @@ class Store:
             )
         return result
 
+    def tracked_in_other_sources(self, source: str) -> list[TrackedEvent]:
+        """Tracked events that belong to any source except the given one."""
+        rows = self._db.execute(
+            "SELECT source, path, uid, gcal_event_id, calendar_id, fingerprint FROM events "
+            "WHERE source != ? ORDER BY source, path, uid",
+            (source,),
+        )
+        return [TrackedEvent(EventKey(s, path, uid), event_id, cal, fp) for s, path, uid, event_id, cal, fp in rows]
+
+    def forget_other_sources_without_events(self, source: str) -> None:
+        """Drop file versions and issues of other sources that have no events left."""
+        with self._db:
+            for table in ("files", "issues"):
+                self._db.execute(
+                    f"DELETE FROM {table} WHERE source != ? AND source NOT IN (SELECT source FROM events)",
+                    (source,),
+                )
+
     def put_event(
         self, key: EventKey, gcal_event_id: str, calendar_id: str, spec: EventSpec, fingerprint: str | None
     ) -> None:
@@ -203,9 +221,11 @@ class Store:
                 [(source, path, kind, uid, message) for uid, message in issues],
             )
 
-    def issues(self, source: str) -> list[Issue]:
+    def issues(self, source: str | None = None) -> list[Issue]:
+        """Issues of one source, or of all sources when none is given."""
         rows = self._db.execute(
-            "SELECT source, path, kind, uid, message FROM issues WHERE source = ? ORDER BY path, id",
+            "SELECT source, path, kind, uid, message FROM issues WHERE ?1 IS NULL OR source = ?1 "
+            "ORDER BY source, path, id",
             (source,),
         )
         return [Issue(*row) for row in rows]

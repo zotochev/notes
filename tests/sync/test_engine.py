@@ -405,20 +405,71 @@ def test_small_deletions_are_not_held(world):
 # --- sources are independent ---
 
 
-def test_events_of_another_source_are_never_touched(world):
+def test_switching_source_removes_the_events_of_the_previous_one(world):
+    world.source.files["/a.md"] = event("u1", "From cloud")
+    world.source.files["/unreadable.md"] = event("u1", "Never read")
+    world.source.fail_reading = {"/unreadable.md"}
+    world.sync()
+    seafile = FakeSource()
+    seafile.files["/a.md"] = event("u1", "From seafile")
+
+    report = world.engine_for("seafile", seafile).run_cycle()
+
+    assert world.calendar.summaries() == ["From seafile"]
+    assert (report.pushed, report.deleted) == (1, 1)
+    assert world.store.tracked("cloud") == {}
+    assert world.store.file_versions("cloud") == {}
+    assert world.store.issues() == []
+
+
+def test_previous_source_is_kept_while_the_new_one_cannot_be_listed(world):
     world.source.files["/a.md"] = event("u1", "From cloud")
     world.sync()
-    other = FakeSource()
-    other.files["/a.md"] = event("u1", "From seafile")
+    seafile = FakeSource()
+    seafile.fail_listing = True
 
-    world.engine_for("seafile", other).run_cycle()
+    report = world.engine_for("seafile", seafile).run_cycle()
 
-    assert world.calendar.summaries() == ["From cloud", "From seafile"]
+    assert report.error is not None
+    assert world.calendar.summaries() == ["From cloud"]
 
-    other.files.clear()
-    world.engine_for("seafile", other).run_cycle()
+
+def test_removing_many_events_of_the_previous_source_waits_for_approval(world):
+    many_files(world, 10)
+    world.sync()
+    seafile = FakeSource()
+    seafile.files["/a.md"] = event("u1", "From seafile")
+    engine = world.engine_for("seafile", seafile)
+
+    report = engine.run_cycle()
+
+    assert report.held_deletes == 10
+    assert len(world.calendar.summaries()) == 11
+    assert {(i.source, i.kind) for i in world.store.issues()} == {("cloud", "held")}
+
+    report = engine.run_cycle(allow_mass_delete=True)
+
+    assert report.deleted == 10
+    assert world.calendar.summaries() == ["From seafile"]
+    assert world.store.issues() == []
+
+
+def test_failed_removal_of_a_previous_source_event_is_reported_and_retried(world):
+    world.source.files["/a.md"] = event("u1", "From cloud")
+    world.sync()
+    seafile = FakeSource()
+    engine = world.engine_for("seafile", seafile)
+    world.calendar.fail_next = CalendarError("quota exceeded")
+
+    engine.run_cycle()
 
     assert world.calendar.summaries() == ["From cloud"]
+    assert [(i.source, i.kind) for i in world.store.issues()] == [("cloud", "sync")]
+
+    engine.run_cycle()
+
+    assert world.calendar.summaries() == []
+    assert world.store.issues() == []
 
 
 def test_state_survives_restart(world, tmp_path):

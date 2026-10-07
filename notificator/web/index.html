@@ -168,6 +168,7 @@ const ISSUE_KINDS = {
 const ACTIONS = {created: 'создано', updated: 'обновлено', deleted: 'удалено', error: 'ошибка'};
 
 let lastCycleId = null;
+let activeSource = null;
 let allEvents = [];
 let calendarNames = {};
 
@@ -210,10 +211,11 @@ function renderStatus(s) {
     const inactive = Object.entries(s.inactiveSources);
     $('inactive-sources').classList.toggle('hidden', !inactive.length);
     $('inactive-sources').textContent = inactive.length
-        ? 'В календаре остаются события неактивных источников ('
+        ? 'В календаре ещё есть события прежних источников ('
             + inactive.map(([name, count]) => `${name}: ${count}`).join(', ')
-            + ') — они не обновляются и не удаляются, пока источник не активен.'
+            + ') — они удаляются, потому что источник больше не активен.'
         : '';
+    activeSource = s.source;
 
     const error = s.lastCycle?.error;
     $('status-error').classList.toggle('hidden', !error);
@@ -236,7 +238,8 @@ function renderIssues(issues) {
     $('attention').classList.toggle('hidden', !issues.length);
     rows('issues', issues, i => `<tr>
         <td class="nowrap"><span class="tag ${esc(i.kind)}">${esc(ISSUE_KINDS[i.kind] || i.kind)}</span></td>
-        <td class="mono">${esc(i.path)}</td><td class="mono">${esc(i.uid)}</td><td>${esc(i.message)}</td></tr>`, 4, '');
+        <td class="mono">${i.source === activeSource ? '' : esc(i.source) + ': '}${esc(i.path)}</td>
+        <td class="mono">${esc(i.uid)}</td><td>${esc(i.message)}</td></tr>`, 4, '');
 }
 
 function renderEvents() {

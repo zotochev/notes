@@ -107,10 +107,17 @@ class SyncEngine:
                 self._source_id, file, parsed, tracked.get(file.path, {}), self._settings.default_calendar
             )
         vanished = plan_vanished(listing.keys(), tracked)
+        # The calendar mirrors the active source only. Events of other sources
+        # go, but only now that this source has answered: a source that cannot
+        # be listed must not empty the calendar.
+        orphans: dict[tuple[str, str], dict[str, TrackedEvent]] = {}
+        for event in self._store.tracked_in_other_sources(self._source_id):
+            orphans.setdefault((event.key.source, event.key.path), {})[event.key.uid] = event
 
         all_actions = [a for actions in (*plans.values(), *vanished.values()) for a in actions]
-        delete_count = sum(isinstance(a, Delete) for a in all_actions)
-        tracked_count = sum(len(events) for events in tracked.values())
+        orphan_count = sum(len(events) for events in orphans.values())
+        delete_count = sum(isinstance(a, Delete) for a in all_actions) + orphan_count
+        tracked_count = sum(len(events) for events in tracked.values()) + orphan_count
         hold_deletes = not allow_mass_delete and too_many_deletes(
             delete_count, tracked_count, self._settings.max_delete_ratio, self._settings.held_deletes_min
         )
@@ -132,6 +139,11 @@ class SyncEngine:
         remembered = versions.keys() | {i.path for i in issues}
         for path in remembered - listing.keys() - tracked.keys():
             self._store.forget_file(self._source_id, path)
+        for (source, path), events in orphans.items():
+            deletes: list[Action] = [Delete(e.key) for e in events.values()]
+            if self._apply(path, deletes, events, report, hold_deletes, source):
+                self._store.forget_file(source, path)
+        self._store.forget_other_sources_without_events(self._source_id)
 
     def _is_watched(self, path: str) -> bool:
         return PurePosixPath(path).suffix.lower() in self._settings.extensions
@@ -165,8 +177,13 @@ class SyncEngine:
         tracked: dict[str, TrackedEvent],
         report: CycleReport,
         hold_deletes: bool,
+        source: str | None = None,
     ) -> bool:
-        """Apply the actions of one file. Returns True when nothing is left to do for it."""
+        """Apply the actions of one file. Returns True when nothing is left to do for it.
+
+        `source` is given only for files of other sources, whose events are being removed.
+        """
+        source = source or self._source_id
         errors: list[tuple[str | None, str]] = []
         held: list[tuple[str | None, str]] = []
         for action in actions:
@@ -187,8 +204,8 @@ class SyncEngine:
                 errors.append((action.key.uid, str(e)))
                 if (path, action.key.uid, str(e)) not in self._known_errors:
                     self._store.log(action.key, "error", str(e))
-        self._store.set_issues(self._source_id, path, "sync", errors)
-        self._store.set_issues(self._source_id, path, "held", held)
+        self._store.set_issues(source, path, "sync", errors)
+        self._store.set_issues(source, path, "held", held)
         return not errors and not held
 
     def _push(self, push: Push, current: TrackedEvent | None) -> None:

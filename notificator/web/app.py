@@ -66,7 +66,7 @@ def create_app(
     def status() -> dict[str, Any]:
         with store() as db:
             last = next(iter(db.cycles(1)), None)
-            issues = db.issues(source)
+            issues = db.issues()
             events = db.events(source)
             counts_by_source = db.event_counts()
         held = sum(i.kind == "held" for i in issues)
@@ -92,7 +92,7 @@ def create_app(
                 "issues": len(issues) - held,
                 "heldDeletes": held,
             },
-            # Events of sources that are not active: still in the calendar, no longer kept up to date.
+            # Events of sources that are no longer active: they are being removed from the calendar.
             "inactiveSources": {name: n for name, n in counts_by_source.items() if name != source},
             "googleSignedIn": auth.is_signed_in(),
             "defaultCalendar": config.default_calendar,
@@ -121,7 +121,7 @@ def create_app(
     @app.get("/api/issues")
     def issues() -> list[dict[str, Any]]:
         with store() as db:
-            return [asdict(i) for i in db.issues(source)]
+            return [asdict(i) for i in db.issues()]
 
     @app.get("/api/journal")
     def journal(limit: int = 200) -> list[dict[str, Any]]:
