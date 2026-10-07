@@ -1,0 +1,38 @@
+Этот файл используется для проверки первичного сканирования и извлечения XML-фрагментов из произвольного текста.
+Ниже расположен один фрагмент <event> в середине текста.
+
+До события — произвольный текст, который не является валидным XML-документом целиком.
+
+<event>
+  <uid>1</uid>
+  <summary>Тестовое событие из файла 2.txt</summary>
+  <description>Это тестовый фрагмент события в формате XML, встроенный в обычный текстовый файл.</description>
+  <start>2026-01-13T14:00:00+04:00</start>
+  <end>2026-01-13T15:14:00+04:00</end>
+  <time_zone>Europe/Ulyanovsk</time_zone>
+  <location>Онлайн</location>
+  <recurrence>
+    RRULE:FREQ=DAILY;COUNT=2
+  </recurrence>
+</event>
+
+До события — произвольный текст, который не является валидным XML-документом целиком.
+
+# <event>
+#   <uid>2</uid>
+#   <summary>Эвент из файла 2.txt</summary>
+#   <description>Это тестовый фрагмент события в формате XML, встроенный в обычный текстовый файл.</description>
+#   <start>2026-01-13T12:00:00+04:00</start>
+#   <end>2026-01-13T12:14:00+04:00</end>
+#   <time_zone>Europe/Ulyanovsk</time_zone>
+#   <location>Онлайн</location>
+#   <attendees>
+#     <email>user@example.com</email>
+#     <email>friend@example.com</email>
+#   </attendees>
+#   <recurrence>
+#     RRULE:FREQ=DAILY;COUNT=2
+#   </recurrence>
+# </event>
+
+После события — ещё немного текста. Этот файл может содержать любую разметку Markdown.
