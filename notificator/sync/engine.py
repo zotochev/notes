@@ -7,9 +7,10 @@ Store, and shares nothing in memory with the web layer.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -26,6 +27,8 @@ from notificator.sync.ports import (
 )
 
 logger = logging.getLogger(__name__)
+# How often a long read phase reports how far it has got.
+_PROGRESS_INTERVAL_SEC = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +91,9 @@ class SyncEngine:
         return report
 
     def _run(self, report: CycleReport, allow_mass_delete: bool) -> None:
-        listing = {f.path: f for f in self._source.list_files() if self._is_watched(f.path)}
+        logger.info("Источник %s: получаю список файлов…", self._source_id)
+        all_files = self._source.list_files()
+        listing = {f.path: f for f in all_files if self._is_watched(f.path)}
         report.listed = len(listing)
         versions = self._store.file_versions(self._source_id)
         tracked = self._store.tracked(self._source_id)
@@ -97,7 +102,12 @@ class SyncEngine:
 
         plans: dict[str, list[Action]] = {}
         to_read = files_to_read(listing.values(), versions)
-        ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
+        if to_read:
+            logger.info(
+                "Источник %s: файлов в облаке %d, подходящих %d, нужно прочитать %d",
+                self._source_id, len(all_files), len(listing), len(to_read),
+            )
+        ctx =ParseContext(default_tz=self._settings.default_tz, now=self._clock())
         for file, text in self._read_all(to_read, report):
             parsed = parse_file(file.path, text, ctx)
             self._store.set_issues(
@@ -156,10 +166,18 @@ class SyncEngine:
             except SourceError as e:
                 return e
 
+        results: dict[str, str | SourceError] = {}
+        last_progress = time.monotonic()
         with ThreadPoolExecutor(max_workers=self._settings.read_concurrency) as pool:
-            results = list(pool.map(read, files))
+            futures = {pool.submit(read, f): f for f in files}
+            for future in as_completed(futures):
+                results[futures[future].path] = future.result()
+                if time.monotonic() - last_progress >= _PROGRESS_INTERVAL_SEC:
+                    last_progress = time.monotonic()
+                    logger.info("Источник %s: прочитано файлов %d из %d", self._source_id, len(results), len(files))
         texts: list[tuple[RemoteFile, str]] = []
-        for file, result in zip(files, results):
+        for file in files:
+            result = results[file.path]
             if isinstance(result, SourceError):
                 report.read_failed += 1
                 self._store.set_issues(self._source_id, file.path, "source", [(None, str(result))])

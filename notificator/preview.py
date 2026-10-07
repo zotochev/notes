@@ -7,9 +7,12 @@ from pathlib import Path
 
 from notificator.calendars.dry_run import DryRunCalendar, PlannedCall
 from notificator.config import STATE_FILE, Config
+from notificator.core.planning import too_many_deletes
 from notificator.store import Store
 from notificator.sync.engine import CycleReport, SyncEngine
 from notificator.wiring import build_source, sync_settings
+
+__all__ = ["Preview", "preview_cycle"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,21 +28,19 @@ def preview_cycle(config: Config, data_dir: Path, source_name: str | None = None
     name = source_name or config.active_source
     source = build_source(config.sources[name])
 
-    def run(allow_mass_delete: bool) -> tuple[CycleReport, list[PlannedCall]]:
-        with tempfile.TemporaryDirectory() as tmp:
-            copy = Path(tmp) / STATE_FILE
-            if (data_dir / STATE_FILE).is_file():
-                with Store(data_dir / STATE_FILE) as real:
-                    real.backup_to(copy)
-            calendar = DryRunCalendar()
-            with Store(copy) as store:
-                report = SyncEngine(name, source, calendar, store, sync_settings(config)).run_cycle(
-                    allow_mass_delete
-                )
-            return report, calendar.calls
-
-    report, calls = run(allow_mass_delete=False)
-    if report.held_deletes:
-        report, calls = run(allow_mass_delete=True)
-        return Preview(report, calls, deletes_need_approval=True)
-    return Preview(report, calls, deletes_need_approval=False)
+    settings = sync_settings(config)
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / STATE_FILE
+        if (data_dir / STATE_FILE).is_file():
+            with Store(data_dir / STATE_FILE) as real:
+                real.backup_to(copy)
+        calendar = DryRunCalendar()
+        with Store(copy) as store:
+            tracked_before = sum(store.event_counts().values())
+            # Deletions are allowed so that they are listed; whether the real
+            # cycle would hold them is worked out below, without a second pass.
+            report = SyncEngine(name, source, calendar, store, settings).run_cycle(allow_mass_delete=True)
+    needs_approval = too_many_deletes(
+        report.deleted, tracked_before, settings.max_delete_ratio, settings.held_deletes_min
+    )
+    return Preview(report, calendar.calls, deletes_need_approval=needs_approval)

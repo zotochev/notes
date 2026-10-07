@@ -109,6 +109,19 @@ def test_events_of_a_vanished_file_are_deleted(world):
     assert world.store.file_versions("cloud").keys() == {"/a.md"}
 
 
+def test_long_read_phase_reports_progress(world, monkeypatch, caplog):
+    monkeypatch.setattr("notificator.sync.engine._PROGRESS_INTERVAL_SEC", 0)
+    many_files(world, 3)
+    world.source.files["/skip.py"] = "not watched"
+
+    with caplog.at_level("INFO"):
+        world.sync()
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert "Источник cloud: файлов в облаке 4, подходящих 3, нужно прочитать 3" in messages
+    assert "Источник cloud: прочитано файлов 3 из 3" in messages
+
+
 def test_unwatched_extensions_are_ignored(world):
     world.source.files["/a.py"] = event("u1", "Code")
 

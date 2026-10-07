@@ -109,6 +109,8 @@ def _plan(config, data_dir: Path, source_name: str | None) -> int:
     name = source_name or config.active_source
     if name not in config.sources:
         raise ConfigError(f"источник {name!r} не описан в sources (есть: {sorted(config.sources)})")
+    # A first pass over a large cloud takes minutes: show what is going on.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S", stream=sys.stderr)
     result = preview_cycle(config, data_dir, name)
     report = result.report
     print(f"Источник: {name}. Файлов: {report.listed}, прочитано: {report.read}, не прочитано: {report.read_failed}")

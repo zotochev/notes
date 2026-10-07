@@ -46,6 +46,7 @@ def sync_settings(config: Config) -> SyncSettings:
         extensions=frozenset(config.extensions),
         max_delete_ratio=config.max_delete_ratio,
         held_deletes_min=config.held_deletes_min,
+        read_concurrency=config.read_concurrency,
     )
 
 
