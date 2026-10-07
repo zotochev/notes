@@ -52,6 +52,48 @@ def test_server_refusing_depth_infinity_is_asked_only_once(server):
     assert sum(depth == "infinity" for _, _, depth in server.requests) == 1
 
 
+def test_directory_too_big_for_one_request_is_listed_in_pieces(server):
+    server.too_big = {"/notes"}
+
+    files = source(server).list_files()
+
+    assert paths(files) == set(FILES)
+    # The parent is split, but its subdirectory is still fetched whole.
+    assert ("PROPFIND", "/notes/deep", "infinity") in server.requests
+
+
+def test_splitting_goes_as_deep_as_needed(server):
+    server.too_big = {"/notes", "/notes/deep", "/notes/deep/er"}
+
+    assert paths(source(server).list_files()) == set(FILES)
+
+
+def test_too_big_directory_is_not_asked_whole_again(server):
+    server.too_big = {"/notes"}
+    src = source(server)
+
+    src.list_files()
+    src.list_files()
+
+    assert server.requests.count(("PROPFIND", "/notes", "infinity")) == 1
+
+
+def test_whole_tree_timeout_is_not_retried_before_splitting(server):
+    server.too_big = {"/notes"}
+
+    WebDavSource(server.url, USER, lambda: PASSWORD, retry_delays=(0.0, 0.0, 0.0), timeout=5).list_files()
+
+    assert server.requests.count(("PROPFIND", "/notes", "infinity")) == 1
+
+
+def test_directory_that_fails_even_on_its_own_still_fails_the_listing(server):
+    server.too_big = {"/notes"}
+    server.broken = {"/notes/deep"}
+
+    with pytest.raises(SourceError, match="/notes/deep"):
+        source(server).list_files()
+
+
 def test_depth_infinity_can_be_disabled_up_front(server):
     source(server, depth_infinity=False).list_files()
 

@@ -3,13 +3,15 @@ Files on a WebDAV server (ownCloud Infinite Scale, or any other).
 
 Paths are relative to the base URL, e.g. "/notes/meeting.md".
 
-Listing asks for a whole subtree at once (PROPFIND Depth: infinity) and falls
-back to walking directory by directory when the server refuses that. Any
-request that fails makes the whole listing fail: a partial listing would look
-like deleted files.
+Listing asks for a whole subtree at once (PROPFIND Depth: infinity). When the
+server refuses that, or a subtree is too big to come back in one answer, the
+subtree is walked directory by directory instead. A directory that cannot be
+listed even on its own makes the whole listing fail: a partial listing would
+look like deleted files.
 """
 from __future__ import annotations
 
+import logging
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +23,8 @@ import requests
 from notificator.core.model import RemoteFile
 from notificator.sources.http import DEFAULT_RETRY_DELAYS, send
 from notificator.sync.ports import SourceError
+
+logger = logging.getLogger(__name__)
 
 _DAV = "{DAV:}"
 _OC = "{http://owncloud.org/ns}"
@@ -34,6 +38,10 @@ _PROPFIND_BODY = (
 
 class _InfinityNotSupported(Exception):
     pass
+
+
+class _TooBigForOneRequest(Exception):
+    """A whole-tree request failed in a way that asking for less may fix: timeout, 5xx, cut-off answer."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +77,8 @@ class WebDavSource:
         self._concurrency = concurrency
         self._timeout = timeout
         self._retry_delays = retry_delays
+        # Directories the server could not return whole; they are listed piece by piece.
+        self._split: set[str] = set()
 
     def list_files(self) -> list[RemoteFile]:
         auth = (self._username, self._password())
@@ -89,34 +99,46 @@ class WebDavSource:
         return response.content.decode("utf-8", errors="ignore")
 
     def _subtree(self, path: str, auth: tuple[str, str]) -> list[_Entry]:
-        if self._depth_infinity:
+        """Every entry under a directory: in one request when the server manages it, in pieces otherwise."""
+        if self._depth_infinity and path not in self._split:
             try:
                 return self._propfind(path, "infinity", auth)
             except _InfinityNotSupported:
                 self._depth_infinity = False
+            except _TooBigForOneRequest as e:
+                # Remembered, so later listings do not wait for the same timeout again.
+                self._split.add(path)
+                logger.info("Каталог %s не отдаётся одним запросом (%s), читаю его по частям", path, e)
         entries: list[_Entry] = []
-        pending = [path]
-        while pending:
-            for entry in self._children(pending.pop(), auth):
-                if entry.is_dir:
-                    pending.append(entry.path)
-                else:
-                    entries.append(entry)
+        for child in self._children(path, auth):
+            if child.is_dir:
+                entries.extend(self._subtree(child.path, auth))
+            else:
+                entries.append(child)
         return entries
 
     def _children(self, path: str, auth: tuple[str, str]) -> list[_Entry]:
         return [e for e in self._propfind(path, "1", auth) if e.path != path]
 
     def _propfind(self, path: str, depth: str, auth: tuple[str, str]) -> list[_Entry]:
-        response = self._send(
-            "PROPFIND", path, auth,
-            data=_PROPFIND_BODY, headers={"Depth": depth, "Content-Type": "application/xml; charset=utf-8"},
-        )
+        whole_tree = depth == "infinity"
+        try:
+            # A whole-tree request that timed out will time out again: split instead of retrying.
+            response = self._send(
+                "PROPFIND", path, auth, retry=not whole_tree,
+                data=_PROPFIND_BODY, headers={"Depth": depth, "Content-Type": "application/xml; charset=utf-8"},
+            )
+        except SourceError as e:
+            if whole_tree:
+                raise _TooBigForOneRequest(str(e)) from e
+            raise
         status = response.status_code
-        if depth == "infinity":
+        if whole_tree:
             # RFC 4918: a server that refuses infinite depth answers 403 with <propfind-finite-depth/>.
             if status in (400, 501) or (status == 403 and "propfind-finite-depth" in response.text.lower()):
                 raise _InfinityNotSupported()
+            if status >= 500:
+                raise _TooBigForOneRequest(f"HTTP {status}")
         if status in (401, 403):
             raise SourceError(f"ошибка авторизации WebDAV (HTTP {status}) для {path}")
         if status != 207:
@@ -124,6 +146,8 @@ class WebDavSource:
         try:
             root = ET.fromstring(response.content)
         except ET.ParseError as e:
+            if whole_tree:
+                raise _TooBigForOneRequest("ответ оборван") from e
             raise SourceError(f"некорректный ответ сервера для {path}: {e}") from e
         return [self._entry(r) for r in root.iter(f"{_DAV}response")]
 
@@ -143,9 +167,11 @@ class WebDavSource:
             raise SourceError(f"сервер не сообщает версию файла {path} (нет ETag и даты изменения)")
         return _Entry(path, is_dir=False, version=version, link=prop.findtext(f"{_OC}privatelink") or None)
 
-    def _send(self, method: str, path: str, auth: tuple[str, str], **kwargs) -> requests.Response:
+    def _send(
+        self, method: str, path: str, auth: tuple[str, str], retry: bool = True, **kwargs
+    ) -> requests.Response:
         return send(
-            method, self._base_url + quote(path, safe="/"), self._retry_delays,
+            method, self._base_url + quote(path, safe="/"), self._retry_delays if retry else (),
             auth=auth, verify=self._verify_ssl, timeout=self._timeout, **kwargs,
         )
 

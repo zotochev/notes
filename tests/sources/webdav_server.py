@@ -20,6 +20,8 @@ class FakeWebDav(ThreadingHTTPServer):
         # Paths answering 500 forever, and paths answering 503 a given number of times.
         self.broken: set[str] = set()
         self.flaky: dict[str, int] = {}
+        # Directories whose whole tree is "too big": Depth: infinity on them answers 504.
+        self.too_big: set[str] = set()
         self.truncate_xml = False
         self.requests: list[tuple[str, str, str]] = []
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -47,6 +49,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path is None:
             return
         depth = self.headers.get("Depth", "infinity")
+        if depth == "infinity" and path in self.server.too_big:
+            self._reply(504, "")
+            return
         if depth == "infinity" and not self.server.allow_infinity:
             self._reply(403, '<d:error xmlns:d="DAV:"><d:propfind-finite-depth/></d:error>')
             return
