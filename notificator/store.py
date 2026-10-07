@@ -12,6 +12,7 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from notificator.core.model import EventKey, EventSpec, TrackedEvent
 
@@ -41,6 +42,12 @@ CREATE TABLE IF NOT EXISTS issues (
     message TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS issues_by_file ON issues (source, path, kind);
+CREATE TABLE IF NOT EXISTS cycles (
+    id     INTEGER PRIMARY KEY,
+    at     TEXT NOT NULL,
+    source TEXT NOT NULL,
+    report TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     TEXT NOT NULL,
@@ -58,7 +65,7 @@ class Issue:
     source: str
     path: str
     # "parse": the file is written incorrectly; "sync": the calendar refused;
-    # "source": the file could not be read.
+    # "source": the file could not be read; "held": a deletion waits for approval.
     kind: str
     uid: str | None
     message: str
@@ -156,6 +163,19 @@ class Store:
                 (key.source, key.path, key.uid),
             )
 
+    def events(self, source: str) -> list[dict[str, Any]]:
+        """Tracked events with what they say, for display. `synced` is False while a write is unconfirmed."""
+        rows = self._db.execute(
+            "SELECT path, uid, gcal_event_id, calendar_id, fingerprint IS NOT NULL, spec FROM events "
+            "WHERE source = ? ORDER BY path, uid",
+            (source,),
+        )
+        return [
+            {"path": path, "gcal_event_id": gcal_event_id, "calendar_id": calendar_id,
+             "synced": bool(synced), **json.loads(spec), "uid": uid}
+            for path, uid, gcal_event_id, calendar_id, synced, spec in rows
+        ]
+
     # --- issues ---
 
     def set_issues(self, source: str, path: str, kind: str, issues: list[tuple[str | None, str]]) -> None:
@@ -175,6 +195,24 @@ class Store:
             (source,),
         )
         return [Issue(*row) for row in rows]
+
+    # --- cycles ---
+
+    def add_cycle(self, source: str, report: dict[str, Any], keep: int = 200) -> None:
+        at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._db:
+            self._db.execute(
+                "INSERT INTO cycles (at, source, report) VALUES (?, ?, ?)",
+                (at, source, json.dumps(report, ensure_ascii=False)),
+            )
+            self._db.execute(
+                "DELETE FROM cycles WHERE id <= (SELECT MAX(id) FROM cycles) - ?", (keep,)
+            )
+
+    def cycles(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Most recent cycles first, as {id, at, source, ...report fields}."""
+        rows = self._db.execute("SELECT id, at, source, report FROM cycles ORDER BY id DESC LIMIT ?", (limit,))
+        return [{"id": id_, "at": at, "source": source, **json.loads(report)} for id_, at, source, report in rows]
 
     # --- journal ---
 

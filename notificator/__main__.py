@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="notificator")
     parser.add_argument("--data-dir", type=Path, default=Path("data"), help="каталог с config.json и состоянием")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("run", help="запустить синхронизацию и админку")
     plan = commands.add_parser("plan", help="показать, что сделал бы цикл синхронизации, ничего не меняя")
     plan.add_argument("--source", help="имя источника из config.json (по умолчанию активный)")
     args = parser.parse_args(argv)
@@ -21,9 +23,23 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.data_dir)
         if args.command == "plan":
             return _plan(config, args.data_dir, args.source)
+        if args.command == "run":
+            return _run(config, args.data_dir)
     except ConfigError as e:
         print(f"Ошибка настроек: {e}", file=sys.stderr)
         return 2
+    return 0
+
+
+def _run(config, data_dir: Path) -> int:
+    import uvicorn
+
+    from notificator.service import SyncService
+    from notificator.web.app import create_app
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    service = SyncService(config, data_dir)
+    uvicorn.run(create_app(service, config, data_dir), host=config.host, port=config.port)
     return 0
 
 

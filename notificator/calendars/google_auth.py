@@ -22,6 +22,9 @@ class GoogleAuth:
         self._client_secrets_file = client_secrets_file
         self._token_file = token_file
         self._redirect_uri = redirect_uri
+        # Sign-ins in progress, by OAuth state. The same Flow must finish the
+        # sign-in: it holds the PKCE verifier that belongs to the URL it issued.
+        self._pending: dict[str, Flow] = {}
 
     def credentials(self) -> Credentials:
         """Return valid credentials, refreshing them if needed. Raises CalendarUnavailable."""
@@ -42,25 +45,34 @@ class GoogleAuth:
         return self._token_file.is_file()
 
     def authorization_url(self) -> str:
-        url, _ = self._flow().authorization_url(
+        """Start a sign-in and return the Google page to send the user to."""
+        if not self._redirect_uri:
+            raise CalendarUnavailable("в настройках не задан google.redirect_uri")
+        try:
+            config = json.loads(self._client_secrets_file.read_text(encoding="utf-8"))
+            flow = Flow.from_client_config(config, scopes=SCOPES)
+        except (OSError, ValueError) as e:
+            raise CalendarUnavailable(f"не удалось прочитать {self._client_secrets_file.name}: {e}") from e
+        flow.redirect_uri = self._redirect_uri
+        url, state = flow.authorization_url(
             access_type="offline", include_granted_scopes="true", prompt="consent"
         )
+        self._pending = {state: flow}
         return url
 
-    def exchange_code(self, code: str) -> None:
-        """Finish sign-in with the code Google passed to the redirect URI."""
-        flow = self._flow()
-        flow.fetch_token(code=code)
+    def finish_sign_in(self, state: str, code: str) -> None:
+        """Finish the sign-in with the state and code Google passed to the redirect URI."""
+        flow = self._pending.pop(state, None)
+        if flow is None:
+            raise CalendarUnavailable("вход в Google не был начат из этой админки или уже завершён")
+        try:
+            flow.fetch_token(code=code)
+        except Exception as e:
+            raise CalendarUnavailable(f"Google не выдал токен: {e}") from e
         self._save(flow.credentials)
 
     def sign_out(self) -> None:
         self._token_file.unlink(missing_ok=True)
-
-    def _flow(self) -> Flow:
-        config = json.loads(self._client_secrets_file.read_text(encoding="utf-8"))
-        flow = Flow.from_client_config(config, scopes=SCOPES)
-        flow.redirect_uri = self._redirect_uri
-        return flow
 
     def _save(self, creds: Credentials) -> None:
         tmp = self._token_file.with_suffix(".tmp")

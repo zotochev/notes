@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notificator</title>
+<style>
+    :root {
+        --bg: #f6f7f9; --card: #fff; --text: #1c2024; --muted: #68707a; --line: #e3e6ea;
+        --ok: #1a7f43; --ok-bg: #e4f5ea; --warn: #9a5b00; --warn-bg: #fff3d6; --bad: #b3261e; --bad-bg: #fdeceb;
+        --accent: #1a5fd0;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bg: #15171a; --card: #1e2125; --text: #e6e8eb; --muted: #9aa3ad; --line: #2e3238;
+            --ok: #6bd08f; --ok-bg: #173323; --warn: #f0c060; --warn-bg: #3a2f12; --bad: #ff8a80; --bad-bg: #3d1b19;
+            --accent: #7fb0ff;
+        }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+           font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 1200px; margin: 0 auto; display: grid; gap: 14px; }
+    section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+    h1 { font-size: 15px; margin: 0; color: var(--muted); font-weight: 600; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    .muted { color: var(--muted); }
+    .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .grow { flex: 1; }
+    button { font: inherit; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line);
+             background: var(--card); color: var(--text); cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: .5; cursor: default; }
+    button.danger { border-color: var(--bad); color: var(--bad); }
+    input[type=search] { font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line);
+                         background: var(--bg); color: var(--text); min-width: 240px; }
+    #headline { font-size: 22px; font-weight: 650; }
+    #status.ok #headline { color: var(--ok); }
+    #status.attention #headline { color: var(--warn); }
+    #status.error #headline { color: var(--bad); }
+    #status-error { background: var(--bad-bg); color: var(--bad); padding: 8px 10px; border-radius: 7px; margin-top: 10px; }
+    .banner { background: var(--warn-bg); color: var(--warn); padding: 10px 12px; border-radius: 7px; margin-bottom: 10px; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 10px 6px 0; white-space: nowrap; }
+    td { padding: 6px 10px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
+    td.nowrap { white-space: nowrap; }
+    .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+    .tag.parse, .tag.held { background: var(--warn-bg); color: var(--warn); }
+    .tag.sync, .tag.source, .tag.error { background: var(--bad-bg); color: var(--bad); }
+    .tag.created, .tag.updated { background: var(--ok-bg); color: var(--ok); }
+    .tag.deleted { background: var(--line); color: var(--text); }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+    .dot.pending { background: var(--warn); }
+    details > summary { cursor: pointer; font-weight: 600; }
+    pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; }
+    .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+    <section id="status" class="starting">
+        <div class="row">
+            <h1 class="grow">Notificator</h1>
+            <button id="sync-now">Синхронизировать сейчас</button>
+        </div>
+        <div id="headline">Загрузка…</div>
+        <div id="status-line" class="muted"></div>
+        <div id="status-error" class="hidden"></div>
+    </section>
+
+    <section id="attention" class="hidden">
+        <h2>Требует внимания</h2>
+        <div id="held-banner" class="banner hidden">
+            <div class="row">
+                <span class="grow" id="held-text"></span>
+                <button id="approve-deletions" class="danger"></button>
+            </div>
+        </div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Что случилось</th><th>Файл</th><th>UID</th><th>Подробности</th></tr></thead>
+            <tbody id="issues"></tbody>
+        </table></div>
+    </section>
+
+    <section>
+        <div class="row" style="margin-bottom:10px">
+            <h2 class="grow" style="margin:0">События <span id="events-count" class="muted"></span></h2>
+            <input id="filter" type="search" placeholder="Поиск по названию, файлу, UID">
+        </div>
+        <div class="table-wrap"><table>
+            <thead><tr><th></th><th>Название</th><th>Начало</th><th>Конец</th><th>Файл</th><th>UID</th><th>Календарь</th></tr></thead>
+            <tbody id="events"></tbody>
+        </table></div>
+    </section>
+
+    <section>
+        <details open>
+            <summary>Журнал действий</summary>
+            <div class="table-wrap"><table>
+                <thead><tr><th>Когда</th><th>Действие</th><th>Файл</th><th>UID</th><th>Подробности</th></tr></thead>
+                <tbody id="journal"></tbody>
+            </table></div>
+        </details>
+    </section>
+
+    <section>
+        <details>
+            <summary>История циклов</summary>
+            <div class="table-wrap"><table>
+                <thead><tr><th>Когда</th><th>Файлов</th><th>Прочитано</th><th>Записано</th><th>Удалено</th><th>Ошибок</th><th>Итог</th></tr></thead>
+                <tbody id="cycles"></tbody>
+            </table></div>
+        </details>
+    </section>
+
+    <section>
+        <h2>Google Calendar</h2>
+        <div class="row">
+            <span id="google-state" class="grow"></span>
+            <a href="/google/login"><button type="button">Войти в Google</button></a>
+            <button id="google-logout">Выйти</button>
+        </div>
+        <div id="calendars" class="muted" style="margin-top:8px"></div>
+    </section>
+
+    <section>
+        <details>
+            <summary>Настройки</summary>
+            <p class="muted">Настройки лежат в файле <span class="mono">config.json</span> в каталоге данных; изменения применяются после перезапуска сервиса.</p>
+            <pre id="config" class="mono"></pre>
+        </details>
+    </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+const ISSUE_KINDS = {
+    parse: 'Ошибка в файле', sync: 'Календарь отклонил', source: 'Файл не прочитан', held: 'Ждёт подтверждения удаления',
+};
+const ACTIONS = {created: 'создано', updated: 'обновлено', deleted: 'удалено', error: 'ошибка'};
+
+let lastCycleId = null;
+let allEvents = [];
+let calendarNames = {};
+
+async function api(path, options) {
+    const response = await fetch(path, options);
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.detail || `HTTP ${response.status}`);
+    return body;
+}
+
+function when(iso, timeZone) {
+    if (!iso) return '';
+    const options = {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'};
+    try { return new Date(iso).toLocaleString('ru-RU', timeZone ? {...options, timeZone} : options); }
+    catch { return iso; }
+}
+
+function rows(target, items, render, colspan, empty) {
+    $(target).innerHTML = items.length
+        ? items.map(render).join('')
+        : `<tr><td colspan="${colspan}" class="muted">${empty}</td></tr>`;
+}
+
+function renderStatus(s) {
+    const headlines = {
+        starting: 'Первая синхронизация ещё не завершилась',
+        ok: 'Всё в порядке',
+        attention: `Требует внимания: ${s.counts.issues + s.counts.heldDeletes}`,
+        error: 'Синхронизация остановлена',
+    };
+    $('status').className = s.state;
+    $('headline').textContent = headlines[s.state];
+    const parts = [`источник: ${s.source} (${s.sourceType})`, `событий: ${s.counts.events} в ${s.counts.files} файлах`];
+    if (s.lastCycle) parts.push(`последний цикл: ${when(s.lastCycle.at)}`);
+    if (s.running) parts.push('идёт синхронизация…');
+    else if (s.secondsUntilNextCycle !== null) parts.push(`следующий через ${s.secondsUntilNextCycle} с`);
+    $('status-line').textContent = parts.join(' · ');
+    $('sync-now').disabled = s.running;
+
+    const error = s.lastCycle?.error;
+    $('status-error').classList.toggle('hidden', !error);
+    $('status-error').textContent = error ? `${error}. Календарь не менялся; попытка повторится автоматически.` : '';
+
+    const held = s.counts.heldDeletes;
+    $('held-banner').classList.toggle('hidden', !held);
+    if (held) {
+        $('held-text').textContent = `Цикл хочет удалить из календаря ${held} событий — это большая часть отслеживаемых, `
+            + 'поэтому удаление отложено. Проверьте список ниже.';
+        if (!$('approve-deletions').dataset.armed) $('approve-deletions').textContent = `Удалить ${held} событий`;
+    }
+    $('google-state').innerHTML = s.googleSignedIn
+        ? `Вход выполнен. Календарь по умолчанию: <span class="mono">${esc(s.defaultCalendar)}</span>`
+        : '<span style="color:var(--bad)">Вход в Google не выполнен — события не синхронизируются.</span>';
+    $('google-logout').disabled = !s.googleSignedIn;
+}
+
+function renderIssues(issues) {
+    $('attention').classList.toggle('hidden', !issues.length);
+    rows('issues', issues, i => `<tr>
+        <td class="nowrap"><span class="tag ${esc(i.kind)}">${esc(ISSUE_KINDS[i.kind] || i.kind)}</span></td>
+        <td class="mono">${esc(i.path)}</td><td class="mono">${esc(i.uid)}</td><td>${esc(i.message)}</td></tr>`, 4, '');
+}
+
+function renderEvents() {
+    const query = $('filter').value.trim().toLowerCase();
+    const shown = allEvents.filter(e => !query || [e.summary, e.path, e.uid, e.location].join('\n').toLowerCase().includes(query));
+    $('events-count').textContent = query ? `${shown.length} из ${allEvents.length}` : allEvents.length;
+    rows('events', shown, e => `<tr>
+        <td><span class="dot ${e.synced ? '' : 'pending'}" title="${e.synced ? 'Есть в календаре' : 'Ещё не записано в календарь'}"></span></td>
+        <td><b>${esc(e.summary)}</b>${e.recurrence ? ` <span class="muted mono">${esc(e.recurrence)}</span>` : ''}
+            ${e.location ? `<div class="muted">${esc(e.location)}</div>` : ''}</td>
+        <td class="nowrap">${esc(when(e.start, e.time_zone))}</td>
+        <td class="nowrap">${esc(when(e.end, e.time_zone))} <span class="muted">${esc(e.time_zone)}</span></td>
+        <td class="mono">${esc(e.path)}</td><td class="mono">${esc(e.uid)}</td>
+        <td>${esc(calendarNames[e.calendar_id] || e.calendar_id)}</td></tr>`, 7, 'Событий нет');
+}
+
+async function refreshData() {
+    const [events, issues, journal, cycles] = await Promise.all(
+        ['/api/events', '/api/issues', '/api/journal', '/api/cycles'].map(p => api(p)));
+    allEvents = events;
+    renderEvents();
+    renderIssues(issues);
+    rows('journal', journal, j => `<tr>
+        <td class="nowrap">${esc(when(j.at))}</td>
+        <td><span class="tag ${esc(j.action)}">${esc(ACTIONS[j.action] || j.action)}</span></td>
+        <td class="mono">${esc(j.path)}</td><td class="mono">${esc(j.uid)}</td><td>${esc(j.detail)}</td></tr>`, 5, 'Пока пусто');
+    rows('cycles', cycles, c => `<tr>
+        <td class="nowrap">${esc(when(c.at))}</td><td>${c.listed}</td><td>${c.read}${c.read_failed ? ` (не прочитано ${c.read_failed})` : ''}</td>
+        <td>${c.pushed}</td><td>${c.deleted}${c.held_deletes ? ` (отложено ${c.held_deletes})` : ''}</td><td>${c.failed}</td>
+        <td>${c.error ? `<span class="tag error">${esc(c.error)}</span>` : 'выполнен'}</td></tr>`, 7, 'Пока пусто');
+}
+
+async function refreshStatus() {
+    try {
+        const status = await api('/api/status');
+        renderStatus(status);
+        const cycleId = status.lastCycle?.id ?? null;
+        if (cycleId !== lastCycleId) { lastCycleId = cycleId; await refreshData(); }
+    } catch (e) {
+        $('status').className = 'error';
+        $('headline').textContent = 'Нет связи с сервисом';
+        $('status-line').textContent = String(e.message || e);
+    }
+}
+
+async function loadCalendars() {
+    try {
+        const calendars = await api('/api/calendars');
+        calendarNames = Object.fromEntries(calendars.map(c => [c.id, c.summary]));
+        $('calendars').innerHTML = 'Доступные календари: ' + calendars.map(c =>
+            `<b>${esc(c.summary)}</b> <span class="mono">${esc(c.id)}</span>`).join(' · ');
+        renderEvents();
+    } catch (e) { $('calendars').textContent = `Список календарей недоступен: ${e.message}`; }
+}
+
+$('sync-now').addEventListener('click', async () => { await api('/api/sync', {method: 'POST'}); refreshStatus(); });
+$('filter').addEventListener('input', renderEvents);
+$('google-logout').addEventListener('click', async () => { await api('/api/google/logout', {method: 'POST'}); refreshStatus(); });
+$('approve-deletions').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    if (!button.dataset.armed) {
+        // Two clicks instead of a dialog: the second one confirms.
+        button.dataset.armed = '1';
+        button.textContent = 'Нажмите ещё раз, чтобы подтвердить';
+        setTimeout(() => { delete button.dataset.armed; refreshStatus(); }, 5000);
+        return;
+    }
+    delete button.dataset.armed;
+    await api('/api/deletions/approve', {method: 'POST'});
+    refreshStatus();
+});
+
+api('/api/config').then(c => { $('config').textContent = JSON.stringify(c, null, 2); });
+loadCalendars();
+refreshStatus();
+setInterval(refreshStatus, 3000);
+</script>
+</body>
+</html>

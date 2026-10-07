@@ -168,7 +168,7 @@ class SyncEngine:
     ) -> bool:
         """Apply the actions of one file. Returns True when nothing is left to do for it."""
         errors: list[tuple[str | None, str]] = []
-        held = False
+        held: list[tuple[str | None, str]] = []
         for action in actions:
             current = tracked.get(action.key.uid)
             try:
@@ -176,7 +176,7 @@ class SyncEngine:
                     self._push(action, current)
                     report.pushed += 1
                 elif hold_deletes:
-                    held = True
+                    held.append((action.key.uid, "событие будет удалено из календаря после подтверждения"))
                 elif current is not None:
                     self._delete(current)
                     report.deleted += 1
@@ -188,6 +188,7 @@ class SyncEngine:
                 if (path, action.key.uid, str(e)) not in self._known_errors:
                     self._store.log(action.key, "error", str(e))
         self._store.set_issues(self._source_id, path, "sync", errors)
+        self._store.set_issues(self._source_id, path, "held", held)
         return not errors and not held
 
     def _push(self, push: Push, current: TrackedEvent | None) -> None:
