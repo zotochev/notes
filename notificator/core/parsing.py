@@ -16,6 +16,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
+from pathlib import PurePosixPath
 from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
@@ -79,6 +80,12 @@ class ParseResult:
         return all(e.uid != uid for e in self.events)
 
 
+def parse_file(path: str, text: str, ctx: ParseContext) -> ParseResult:
+    """Parse a file's text with the parser that fits its type."""
+    parser = _PARSERS_BY_SUFFIX.get(PurePosixPath(path).suffix.lower(), parse_text)
+    return parser(text, ctx)
+
+
 def parse_text(
     text: str, ctx: ParseContext, max_fragment_bytes: int = MAX_FRAGMENT_BYTES
 ) -> ParseResult:
@@ -126,6 +133,10 @@ def parse_csv(text: str, ctx: ParseContext) -> ParseResult:
             continue
         collector.add(event, None, where=f"строка {row_num}: ")
     return collector.result()
+
+
+# File types with their own format; every other watched file is scanned for <event> blocks.
+_PARSERS_BY_SUFFIX = {".csv": parse_csv}
 
 
 def build_event(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpec:
