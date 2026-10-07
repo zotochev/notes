@@ -56,6 +56,18 @@
     details > summary { cursor: pointer; font-weight: 600; }
     pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; }
     .hidden { display: none; }
+    button.link { border: none; background: none; padding: 0; color: var(--accent); font-weight: 650; text-align: left; }
+    button.link:hover { text-decoration: underline; }
+    .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); display: flex; align-items: center;
+             justify-content: center; padding: 16px; z-index: 10; }
+    .modal.hidden { display: none; }
+    .modal-box { background: var(--card); border-radius: 10px; padding: 18px 20px; width: 100%; max-width: 620px;
+                 max-height: 85vh; overflow-y: auto; }
+    .field { display: flex; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+    .field > :first-child { flex: 0 0 110px; color: var(--muted); }
+    .field > :last-child { flex: 1; min-width: 0; word-break: break-word; white-space: pre-wrap; }
+    .field ul { margin: 0; padding-left: 18px; white-space: normal; }
+    a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -133,6 +145,17 @@
         </details>
     </section>
 </main>
+
+<div id="google-modal" class="modal hidden">
+    <div class="modal-box">
+        <div class="row">
+            <h2 id="google-modal-title" class="grow" style="margin:0"></h2>
+            <button id="google-modal-close" title="Закрыть">×</button>
+        </div>
+        <p class="muted" style="margin:4px 0 10px">Так событие выглядит в Google Calendar прямо сейчас.</p>
+        <div id="google-modal-body"></div>
+    </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -213,13 +236,77 @@ function renderEvents() {
     $('events-count').textContent = query ? `${shown.length} из ${allEvents.length}` : allEvents.length;
     rows('events', shown, e => `<tr>
         <td><span class="dot ${e.synced ? '' : 'pending'}" title="${e.synced ? 'Есть в календаре' : 'Ещё не записано в календарь'}"></span></td>
-        <td><b>${esc(e.summary)}</b>${e.recurrence ? ` <span class="muted mono">${esc(e.recurrence)}</span>` : ''}
+        <td><button class="link" data-path="${esc(e.path)}" data-uid="${esc(e.uid)}" title="Показать событие в Google Calendar">${esc(e.summary)}</button>${e.recurrence ? ` <span class="muted mono">${esc(e.recurrence)}</span>` : ''}
             ${e.location ? `<div class="muted">${esc(e.location)}</div>` : ''}</td>
         <td class="nowrap">${esc(when(e.start, e.time_zone))}</td>
         <td class="nowrap">${esc(when(e.end, e.time_zone))} <span class="muted">${esc(e.time_zone)}</span></td>
         <td class="mono">${esc(e.path)}</td><td class="mono">${esc(e.uid)}</td>
         <td>${esc(calendarNames[e.calendar_id] || e.calendar_id)}</td></tr>`, 7, 'Событий нет');
 }
+
+// Escape a description but keep plain <a href="http(s)://...">text</a> links, as written by the sync, clickable.
+function descriptionHtml(text) {
+    const link = /<a href="([^"]*)">([^<]*)<\/a>/g;
+    let html = '', last = 0, m;
+    while ((m = link.exec(text)) !== null) {
+        html += esc(text.slice(last, m.index));
+        const href = m[1].replaceAll('&amp;', '&');
+        html += /^https?:\/\//i.test(href)
+            ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(m[2])}</a>`
+            : esc(m[0]);
+        last = link.lastIndex;
+    }
+    return html + esc(text.slice(last));
+}
+
+function googleTime(t) {
+    if (!t) return '';
+    return t.date ? esc(t.date) : `${esc(when(t.dateTime, t.timeZone))} <span class="muted">${esc(t.timeZone)}</span>`;
+}
+
+function googleEventHtml(ev) {
+    const statuses = {
+        confirmed: '<span class="tag created">есть в календаре</span>',
+        cancelled: '<span class="tag error">удалено в календаре</span>',
+        tentative: '<span class="tag parse">предварительно</span>',
+    };
+    const answers = {accepted: 'придёт', declined: 'не придёт', tentative: 'возможно', needsAction: 'не ответил'};
+    const fields = [
+        ['Статус', (statuses[ev.status] || esc(ev.status))
+            + (ev.synced ? '' : ' <span class="tag held">последняя запись не подтверждена</span>')],
+        ['Календарь', esc(calendarNames[ev.calendarId] || ev.calendarId)],
+        ['Начало', googleTime(ev.start)],
+        ['Конец', googleTime(ev.end)],
+        ['Повтор', (ev.recurrence || []).map(esc).join('<br>')],
+        ['Место', esc(ev.location)],
+        ['Описание', ev.description ? descriptionHtml(ev.description) : ''],
+        ['Участники', ev.attendees?.length
+            ? `<ul>${ev.attendees.map(a => `<li>${esc(a.email)} <span class="muted">${esc(answers[a.responseStatus] || '')}</span></li>`).join('')}</ul>`
+            : ''],
+        ['Создано', esc(when(ev.created))],
+        ['Изменено', esc(when(ev.updated))],
+        ['ID в Google', `<span class="mono">${esc(ev.id)}</span>`],
+        ['Ссылка', ev.htmlLink ? `<a href="${esc(ev.htmlLink)}" target="_blank" rel="noopener noreferrer">Открыть в Google Calendar</a>` : ''],
+    ];
+    return fields.filter(([, value]) => value)
+        .map(([label, value]) => `<div class="field"><div>${label}</div><div>${value}</div></div>`).join('');
+}
+
+async function openGoogleModal(path, uid) {
+    $('google-modal-title').textContent = 'Загрузка…';
+    $('google-modal-body').innerHTML = '';
+    $('google-modal').classList.remove('hidden');
+    try {
+        const ev = await api('/api/events/google?' + new URLSearchParams({path, uid}));
+        $('google-modal-title').textContent = ev.summary || '(без названия)';
+        $('google-modal-body').innerHTML = googleEventHtml(ev);
+    } catch (e) {
+        $('google-modal-title').textContent = 'Не удалось показать событие';
+        $('google-modal-body').innerHTML = `<div class="field"><div>Причина</div><div>${esc(e.message)}</div></div>`;
+    }
+}
+
+function closeGoogleModal() { $('google-modal').classList.add('hidden'); }
 
 async function refreshData() {
     const [events, issues, journal, cycles] = await Promise.all(
@@ -262,6 +349,13 @@ async function loadCalendars() {
 
 $('sync-now').addEventListener('click', async () => { await api('/api/sync', {method: 'POST'}); refreshStatus(); });
 $('filter').addEventListener('input', renderEvents);
+$('events').addEventListener('click', event => {
+    const button = event.target.closest('button.link');
+    if (button) openGoogleModal(button.dataset.path, button.dataset.uid);
+});
+$('google-modal-close').addEventListener('click', closeGoogleModal);
+$('google-modal').addEventListener('click', event => { if (event.target === event.currentTarget) closeGoogleModal(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeGoogleModal(); });
 $('google-logout').addEventListener('click', async () => { await api('/api/google/logout', {method: 'POST'}); refreshStatus(); });
 $('approve-deletions').addEventListener('click', async event => {
     const button = event.currentTarget;

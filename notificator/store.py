@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import Any
 
 from notificator.core.model import EventKey, EventSpec, TrackedEvent
 
+_SETUP_LOCK = threading.Lock()
+_SCHEMA_VERSION = 1
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     source  TEXT NOT NULL,
@@ -83,10 +86,16 @@ class JournalEntry:
 
 class Store:
     def __init__(self, path: str | Path) -> None:
-        self._db = sqlite3.connect(str(path))
-        self._db.execute("PRAGMA journal_mode=WAL")
-        with self._db:
-            self._db.executescript(_SCHEMA)
+        # The timeout is how long a write waits for another connection's write to finish.
+        self._db = sqlite3.connect(str(path), timeout=30)
+        # Set up the file only once: opening an existing database must not
+        # write, or every reader would contend with the sync thread.
+        # Switching a file to WAL cannot wait for other connections, so threads
+        # that open a new database at the same moment must take turns.
+        with _SETUP_LOCK:
+            if self._db.execute("PRAGMA user_version").fetchone()[0] < _SCHEMA_VERSION:
+                self._db.execute("PRAGMA journal_mode=WAL")
+                self._db.executescript(_SCHEMA + f"PRAGMA user_version = {_SCHEMA_VERSION};")
 
     def close(self) -> None:
         self._db.close()
@@ -171,8 +180,9 @@ class Store:
             (source,),
         )
         return [
-            {"path": path, "gcal_event_id": gcal_event_id, "calendar_id": calendar_id,
-             "synced": bool(synced), **json.loads(spec), "uid": uid}
+            # The spec's own calendar_id (None = default) must not hide where the event really is.
+            {**json.loads(spec), "path": path, "uid": uid, "gcal_event_id": gcal_event_id,
+             "calendar_id": calendar_id, "synced": bool(synced)}
             for path, uid, gcal_event_id, calendar_id, synced, spec in rows
         ]
 

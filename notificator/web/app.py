@@ -6,6 +6,7 @@ Authentication is expected to be done by a reverse proxy in front of this app.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
@@ -22,7 +23,7 @@ from notificator.config import STATE_FILE, Config
 from notificator.core.parsing import ParseContext, parse_text
 from notificator.service import SyncService
 from notificator.store import Store
-from notificator.sync.ports import CalendarError
+from notificator.sync.ports import CalendarError, EventNotFound
 from notificator.wiring import google_auth
 
 _INDEX = Path(__file__).parent / "index.html"
@@ -33,7 +34,14 @@ class _Text(BaseModel):
     text: str
 
 
-def create_app(service: SyncService, config: Config, data_dir: Path, start_service: bool = True) -> FastAPI:
+def create_app(
+    service: SyncService,
+    config: Config,
+    data_dir: Path,
+    start_service: bool = True,
+    calendar_factory: Callable[[], Any] | None = None,
+) -> FastAPI:
+    """`calendar_factory` replaces Google Calendar in tests."""
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if start_service:
@@ -44,6 +52,7 @@ def create_app(service: SyncService, config: Config, data_dir: Path, start_servi
 
     app = FastAPI(title="Notificator", lifespan=lifespan)
     auth = google_auth(config, data_dir)
+    google = calendar_factory or (lambda: GoogleCalendar(auth.credentials()))
     source = service.source_name
 
     def store() -> Store:
@@ -91,6 +100,21 @@ def create_app(service: SyncService, config: Config, data_dir: Path, start_servi
         with store() as db:
             return db.events(source)
 
+    @app.get("/api/events/google")
+    def event_in_google(path: str, uid: str) -> dict[str, Any]:
+        """The event as Google Calendar has it right now, for comparing with the file."""
+        with store() as db:
+            tracked = next((e for e in db.events(source) if e["path"] == path and e["uid"] == uid), None)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="Это событие не отслеживается")
+        try:
+            remote = google().get(tracked["calendar_id"], tracked["gcal_event_id"])
+        except EventNotFound:
+            raise HTTPException(status_code=404, detail="События нет в Google Calendar") from None
+        except CalendarError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        return {**remote, "calendarId": tracked["calendar_id"], "synced": tracked["synced"]}
+
     @app.get("/api/issues")
     def issues() -> list[dict[str, Any]]:
         with store() as db:
@@ -135,7 +159,7 @@ def create_app(service: SyncService, config: Config, data_dir: Path, start_servi
     @app.get("/api/calendars")
     def calendars() -> list[dict[str, Any]]:
         try:
-            return GoogleCalendar(auth.credentials()).writable_calendars()
+            return google().writable_calendars()
         except CalendarError as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
 

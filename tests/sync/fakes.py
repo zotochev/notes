@@ -67,6 +67,14 @@ class FakeCalendar:
         if self.events.pop(key, None) is not None:
             self.deleted.add(key)
 
+    def get(self, calendar_id: str, event_id: str) -> dict[str, Any]:
+        key = (calendar_id, event_id)
+        if key in self.events:
+            return {"id": event_id, "status": "confirmed", **self.events[key]}
+        if key in self.deleted:
+            return {"id": event_id, "status": "cancelled"}
+        raise EventNotFound(event_id)
+
     def delete_by_hand(self, summary: str) -> None:
         """Simulate the user deleting an event in the calendar UI."""
         (key,) = [k for k, body in self.events.items() if body["summary"] == summary]

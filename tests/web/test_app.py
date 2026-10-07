@@ -23,7 +23,9 @@ class World:
         self.calendar = FakeCalendar()
         self.calendar_error: Exception | None = None
         self.service = SyncService(CONFIG, tmp_path, source=self.source, calendar_factory=self._calendar)
-        self.client = TestClient(create_app(self.service, CONFIG, tmp_path, start_service=False))
+        self.client = TestClient(create_app(
+            self.service, CONFIG, tmp_path, start_service=False, calendar_factory=self._calendar,
+        ))
 
     def _calendar(self) -> FakeCalendar:
         if self.calendar_error:
@@ -63,6 +65,7 @@ def test_status_and_events_after_a_clean_cycle(world):
     assert status["state"] == "ok"
     assert status["counts"] == {"events": 1, "files": 1, "unsynced": 0, "issues": 0, "heldDeletes": 0}
     assert (shown["summary"], shown["path"], shown["uid"], shown["synced"]) == ("Meeting", "/a.md", "u1", True)
+    assert shown["calendar_id"] == "primary"
     assert shown["start"] == "2030-01-01T10:00:00+04:00"
 
 
@@ -107,6 +110,45 @@ def test_held_deletions_are_listed_and_can_be_approved(world):
 
     assert world.status()["state"] == "ok"
     assert world.calendar.summaries() == []
+
+
+def test_event_can_be_looked_up_in_google(world):
+    world.source.files["/notes/a.md"] = event("u1", "Meeting")
+    world.service.run_cycle()
+
+    response = world.client.get("/api/events/google", params={"path": "/notes/a.md", "uid": "u1"})
+
+    remote = response.json()
+    assert response.status_code == 200
+    assert (remote["status"], remote["summary"], remote["calendarId"], remote["synced"]) == (
+        "confirmed", "Meeting", "primary", True,
+    )
+    assert remote["description"].startswith("uid: u1\nfile: /notes/a.md")
+
+
+def test_event_deleted_by_hand_is_shown_as_cancelled(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.service.run_cycle()
+    world.calendar.delete_by_hand("Meeting")
+
+    remote = world.client.get("/api/events/google", params={"path": "/a.md", "uid": "u1"}).json()
+
+    assert remote["status"] == "cancelled"
+
+
+def test_looking_up_an_untracked_or_unreachable_event_explains_why(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.service.run_cycle()
+
+    unknown = world.client.get("/api/events/google", params={"path": "/a.md", "uid": "nope"})
+    world.calendar.events.clear()
+    missing = world.client.get("/api/events/google", params={"path": "/a.md", "uid": "u1"})
+    world.calendar_error = CalendarUnavailable("Google не авторизован")
+    unavailable = world.client.get("/api/events/google", params={"path": "/a.md", "uid": "u1"})
+
+    assert (unknown.status_code, unknown.json()["detail"]) == (404, "Это событие не отслеживается")
+    assert (missing.status_code, missing.json()["detail"]) == (404, "События нет в Google Calendar")
+    assert (unavailable.status_code, unavailable.json()["detail"]) == (503, "Google не авторизован")
 
 
 def test_journal_and_cycle_history(world):
