@@ -132,12 +132,14 @@ mkdir data
 ## Запуск как сервис (systemd)
 
 ```bash
-sudo cp notificator.service /etc/systemd/system/
-sudo nano /etc/systemd/system/notificator.service   # User, WorkingDirectory, ExecStart
+sudo cp notes.service /etc/systemd/system/
+sudo nano /etc/systemd/system/notes.service   # User, WorkingDirectory, ExecStart
 sudo systemctl daemon-reload
-sudo systemctl enable --now notificator
-journalctl -u notificator -f
+sudo systemctl enable --now notes
+journalctl -u notes -f
 ```
+
+Сервис называется `notes`, чтобы не совпасть с юнитом старой версии (`notificator.service`).
 
 ## Переезд со старой версии
 
@@ -145,7 +147,9 @@ journalctl -u notificator -f
 блоку в каком файле. Благодаря этому новая версия продолжает вести те же события, а не создаёт
 их заново.
 
-1. Остановите старый сервис.
+1. Остановите старый сервис и отключите его автозапуск:
+   `sudo systemctl disable --now notificator`. Обе версии одновременно работать не должны:
+   они правили бы одни и те же события и заняли бы один порт админки.
 2. Установите новую версию (раздел «Установка»).
 3. Перенесите файлы:
 
