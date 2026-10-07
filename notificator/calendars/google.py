@@ -52,6 +52,19 @@ class GoogleCalendar:
         """Return the raw event resource. Raises EventNotFound."""
         return self._execute(self._service.events().get(calendarId=calendar_id, eventId=event_id))
 
+    def list_events(self, calendar_id: str) -> list[dict[str, Any]]:
+        """Every event of a calendar as raw resources; recurring events are returned once, not per occurrence."""
+        events: list[dict[str, Any]] = []
+        page_token = None
+        while True:
+            page = self._execute(self._service.events().list(
+                calendarId=calendar_id, pageToken=page_token, maxResults=2500, showDeleted=False,
+            ))
+            events += page.get("items", [])
+            page_token = page.get("nextPageToken")
+            if not page_token:
+                return events
+
     def writable_calendars(self) -> list[dict[str, Any]]:
         """Calendars the user can add events to, as {id, summary, primary}."""
         calendars: list[dict[str, Any]] = []

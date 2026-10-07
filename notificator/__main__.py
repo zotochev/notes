@@ -17,6 +17,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("run", help="запустить синхронизацию и админку")
     plan = commands.add_parser("plan", help="показать, что сделал бы цикл синхронизации, ничего не меняя")
     plan.add_argument("--source", help="имя источника из config.json (по умолчанию активный)")
+    cleanup = commands.add_parser(
+        "cleanup", help="найти в календарях события notificator, которых нет в текущем состоянии"
+    )
+    cleanup.add_argument("--delete", action="store_true", help="удалить найденные события, а не только показать")
     args = parser.parse_args(argv)
 
     try:
@@ -25,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
             return _plan(config, args.data_dir, args.source)
         if args.command == "run":
             return _run(config, args.data_dir)
+        if args.command == "cleanup":
+            return _cleanup(config, args.data_dir, args.delete)
     except ConfigError as e:
         print(f"Ошибка настроек: {e}", file=sys.stderr)
         return 2
@@ -40,6 +46,32 @@ def _run(config, data_dir: Path) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     service = SyncService(config, data_dir)
     uvicorn.run(create_app(service, config, data_dir), host=config.host, port=config.port)
+    return 0
+
+
+def _cleanup(config, data_dir: Path, delete: bool) -> int:
+    from notificator.calendars.google import GoogleCalendar
+    from notificator.cleanup import delete_untracked, find_untracked
+    from notificator.config import STATE_FILE
+    from notificator.store import Store
+    from notificator.sync.ports import CalendarError
+    from notificator.wiring import google_auth
+
+    try:
+        calendar = GoogleCalendar(google_auth(config, data_dir).credentials())
+        with Store(data_dir / STATE_FILE) as store:
+            found = find_untracked(calendar, store)
+        print(f"Событий notificator, которых нет в текущем состоянии: {len(found)}")
+        for e in found:
+            print(f"  {e.start:26} {e.summary!r} uid={e.uid} file: {e.file} -> {e.calendar_name}")
+        if found and not delete:
+            print("Ничего не удалено. Чтобы удалить эти события, повторите команду с --delete.")
+        elif found:
+            delete_untracked(calendar, found)
+            print(f"Удалено: {len(found)}")
+    except CalendarError as e:
+        print(f"Ошибка календаря: {e}", file=sys.stderr)
+        return 1
     return 0
 
 

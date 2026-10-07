@@ -154,6 +154,10 @@ class Store:
             )
         return result
 
+    def tracked_event_ids(self) -> set[tuple[str, str]]:
+        """(calendar_id, gcal_event_id) of every tracked event, whatever its source."""
+        return set(self._db.execute("SELECT calendar_id, gcal_event_id FROM events").fetchall())
+
     def tracked_in_other_sources(self, source: str) -> list[TrackedEvent]:
         """Tracked events that belong to any source except the given one."""
         rows = self._db.execute(

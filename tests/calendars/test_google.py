@@ -110,6 +110,17 @@ def test_rejected_event_is_an_ordinary_error_with_googles_message():
     assert not isinstance(info.value, CalendarUnavailable)
 
 
+def test_list_events_follows_pages():
+    cal, http = calendar(
+        (200, {"items": [{"id": "a"}], "nextPageToken": "p2"}),
+        (200, {"items": [{"id": "b"}]}),
+    )
+
+    assert cal.list_events("primary") == [{"id": "a"}, {"id": "b"}]
+    assert "showDeleted=false" in http.requests[0][1]
+    assert "pageToken=p2" in http.requests[1][1]
+
+
 def test_writable_calendars_follow_pages_and_skip_read_only():
     cal, http = calendar(
         (200, {"items": [{"id": "a", "summary": "Mine", "accessRole": "owner", "primary": True}], "nextPageToken": "p2"}),
