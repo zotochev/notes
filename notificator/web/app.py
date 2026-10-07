@@ -83,6 +83,7 @@ def create_app(
             "sourceType": config.sources[source].type,
             "state": state,
             "running": service.running,
+            "progress": service.progress,
             "secondsUntilNextCycle": service.seconds_until_next_cycle,
             "lastCycle": last,
             "counts": {

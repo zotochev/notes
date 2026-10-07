@@ -88,6 +88,9 @@ class Store:
     def __init__(self, path: str | Path) -> None:
         # The timeout is how long a write waits for another connection's write to finish.
         self._db = sqlite3.connect(str(path), timeout=30)
+        # With WAL this keeps the file consistent after a crash without forcing
+        # the disk to flush on every commit; a cycle makes thousands of commits.
+        self._db.execute("PRAGMA synchronous=NORMAL")
         # Set up the file only once: opening an existing database must not
         # write, or every reader would contend with the sync thread.
         # Switching a file to WAL cannot wait for other connections, so threads

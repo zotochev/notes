@@ -203,7 +203,7 @@ function renderStatus(s) {
     $('headline').textContent = headlines[s.state];
     const parts = [`источник: ${s.source} (${s.sourceType})`, `событий: ${s.counts.events} в ${s.counts.files} файлах`];
     if (s.lastCycle) parts.push(`последний цикл: ${when(s.lastCycle.at)}`);
-    if (s.running) parts.push('идёт синхронизация…');
+    if (s.running) parts.push(s.progress ? `идёт синхронизация: ${s.progress}` : 'идёт синхронизация…');
     else if (s.secondsUntilNextCycle !== null) parts.push(`следующий через ${s.secondsUntilNextCycle} с`);
     $('status-line').textContent = parts.join(' · ');
     $('sync-now').disabled = s.running;
@@ -341,7 +341,8 @@ async function refreshStatus() {
         const status = await api('/api/status');
         renderStatus(status);
         const cycleId = status.lastCycle?.id ?? null;
-        if (cycleId !== lastCycleId) { lastCycleId = cycleId; await refreshData(); }
+        // While a cycle runs, events and the journal change before the cycle is recorded.
+        if (cycleId !== lastCycleId || status.running) { lastCycleId = cycleId; await refreshData(); }
     } catch (e) {
         $('status').className = 'error';
         $('headline').textContent = 'Нет связи с сервисом';

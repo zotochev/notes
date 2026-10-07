@@ -48,6 +48,22 @@ def test_page_is_served(world):
     assert "Notificator" in response.text
 
 
+def test_status_shows_what_a_running_cycle_is_doing(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    seen: list[str] = []
+    original = world.source.read_text
+
+    def read_and_look(file):
+        seen.append(world.status()["progress"])
+        return original(file)
+
+    world.source.read_text = read_and_look
+    world.service.run_cycle()
+
+    assert seen == ["файлов в облаке 1, подходящих 1, нужно прочитать 1"]
+    assert world.status()["progress"] == ""
+
+
 def test_status_before_the_first_cycle(world):
     status = world.status()
 

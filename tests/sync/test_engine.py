@@ -120,6 +120,33 @@ def test_long_read_phase_reports_progress(world, monkeypatch, caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert "Источник cloud: файлов в облаке 4, подходящих 3, нужно прочитать 3" in messages
     assert "Источник cloud: прочитано файлов 3 из 3" in messages
+    assert "Источник cloud: изменений для календаря: 3, записываю…" in messages
+    assert "Источник cloud: записано в календарь 3 из 3" in messages
+
+
+def test_progress_is_passed_to_the_callback(world, monkeypatch):
+    monkeypatch.setattr("notificator.sync.engine._PROGRESS_INTERVAL_SEC", 0)
+    many_files(world, 2)
+    said: list[str] = []
+    engine = SyncEngine(
+        "cloud", world.source, world.calendar, world.store, SETTINGS, on_progress=said.append,
+    )
+
+    engine.run_cycle()
+
+    assert said[0] == "получаю список файлов…"
+    assert said[-1] == "записано в календарь 2 из 2"
+
+
+def test_held_deletions_are_not_counted_as_work_to_do(world, monkeypatch, caplog):
+    many_files(world, 10)
+    world.sync()
+    world.source.files = {"/new.md": event("u1", "New")}
+
+    with caplog.at_level("INFO"):
+        world.sync()
+
+    assert "Источник cloud: изменений для календаря: 1, записываю…" in [r.getMessage() for r in caplog.records]
 
 
 def test_unwatched_extensions_are_ignored(world):

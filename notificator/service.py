@@ -47,6 +47,8 @@ class SyncService:
         self._running = threading.Event()
         self._next_run_at: float | None = None
         self._thread: threading.Thread | None = None
+        # What the running cycle is doing right now, for the admin page.
+        self.progress = ""
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="sync", daemon=True)
@@ -86,7 +88,8 @@ class SyncService:
                 try:
                     calendar = self._calendar_factory()
                     report = SyncEngine(
-                        self.source_name, self._source, calendar, store, self._settings
+                        self.source_name, self._source, calendar, store, self._settings,
+                        on_progress=self._set_progress,
                     ).run_cycle(allow_mass_delete)
                 except CalendarUnavailable as e:
                     report = CycleReport(error=f"календарь недоступен: {e}")
@@ -99,7 +102,11 @@ class SyncService:
                 store.add_cycle(self.source_name, asdict(report))
         finally:
             self._running.clear()
+            self.progress = ""
         return report
+
+    def _set_progress(self, message: str) -> None:
+        self.progress = message
 
     def _loop(self) -> None:
         while not self._stop.is_set():

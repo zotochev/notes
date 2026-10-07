@@ -67,7 +67,9 @@ class SyncEngine:
         settings: SyncSettings,
         clock: Callable[[], datetime] | None = None,
         new_event_id: Callable[[], str] = lambda: uuid.uuid4().hex,
+        on_progress: Callable[[str], None] = lambda message: None,
     ) -> None:
+        """`on_progress` receives a short description of what the cycle is doing right now."""
         self._source_id = source_id
         self._source = source
         self._calendar = calendar
@@ -77,6 +79,21 @@ class SyncEngine:
         self._new_event_id = new_event_id
         # Sync errors already reported, so a failure repeated every cycle is journalled once.
         self._known_errors: set[tuple[str, str | None, str]] = set()
+        self._on_progress = on_progress
+        # Progress of the write phase.
+        self._to_apply = 0
+        self._applied = 0
+        self._last_progress = 0.0
+
+    def _say(self, message: str) -> None:
+        logger.info("Источник %s: %s", self._source_id, message)
+        self._on_progress(message)
+
+    def _action_done(self) -> None:
+        self._applied += 1
+        if time.monotonic() - self._last_progress >= _PROGRESS_INTERVAL_SEC:
+            self._last_progress = time.monotonic()
+            self._say(f"записано в календарь {self._applied} из {self._to_apply}")
 
     def run_cycle(self, allow_mass_delete: bool = False) -> CycleReport:
         report = CycleReport()
@@ -91,7 +108,7 @@ class SyncEngine:
         return report
 
     def _run(self, report: CycleReport, allow_mass_delete: bool) -> None:
-        logger.info("Источник %s: получаю список файлов…", self._source_id)
+        self._say("получаю список файлов…")
         all_files = self._source.list_files()
         listing = {f.path: f for f in all_files if self._is_watched(f.path)}
         report.listed = len(listing)
@@ -103,11 +120,10 @@ class SyncEngine:
         plans: dict[str, list[Action]] = {}
         to_read = files_to_read(listing.values(), versions)
         if to_read:
-            logger.info(
-                "Источник %s: файлов в облаке %d, подходящих %d, нужно прочитать %d",
-                self._source_id, len(all_files), len(listing), len(to_read),
+            self._say(
+                f"файлов в облаке {len(all_files)}, подходящих {len(listing)}, нужно прочитать {len(to_read)}"
             )
-        ctx =ParseContext(default_tz=self._settings.default_tz, now=self._clock())
+        ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
         for file, text in self._read_all(to_read, report):
             parsed = parse_file(file.path, text, ctx)
             self._store.set_issues(
@@ -134,6 +150,12 @@ class SyncEngine:
         if hold_deletes:
             report.held_deletes = delete_count
             logger.warning("Holding %d of %d deletions for approval", delete_count, tracked_count)
+
+        self._applied = 0
+        self._to_apply = len(all_actions) + orphan_count - (delete_count if hold_deletes else 0)
+        self._last_progress = time.monotonic()
+        if self._to_apply:
+            self._say(f"изменений для календаря: {self._to_apply}, записываю…")
 
         for path, actions in plans.items():
             complete = self._apply(path, actions, tracked.get(path, {}), report, hold_deletes)
@@ -174,7 +196,7 @@ class SyncEngine:
                 results[futures[future].path] = future.result()
                 if time.monotonic() - last_progress >= _PROGRESS_INTERVAL_SEC:
                     last_progress = time.monotonic()
-                    logger.info("Источник %s: прочитано файлов %d из %d", self._source_id, len(results), len(files))
+                    self._say(f"прочитано файлов {len(results)} из {len(files)}")
         texts: list[tuple[RemoteFile, str]] = []
         for file in files:
             result = results[file.path]
@@ -222,6 +244,8 @@ class SyncEngine:
                 errors.append((action.key.uid, str(e)))
                 if (path, action.key.uid, str(e)) not in self._known_errors:
                     self._store.log(action.key, "error", str(e))
+            if isinstance(action, Push) or not hold_deletes:
+                self._action_done()
         self._store.set_issues(source, path, "sync", errors)
         self._store.set_issues(source, path, "held", held)
         return not errors and not held
