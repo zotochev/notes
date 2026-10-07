@@ -215,6 +215,17 @@ def test_calendar_failure_for_one_event_is_reported_and_retried(world):
     assert world.calendar.calls.count("insert") == 3
 
 
+def test_repeated_failure_is_journalled_once(world):
+    world.source.files["/a.md"] = event("u1", "One")
+
+    for _ in range(3):
+        world.calendar.fail_next = CalendarError("calendar not found")
+        world.sync()
+
+    assert [e.action for e in world.store.journal()] == ["error"]
+    assert len(world.store.issues("cloud")) == 1
+
+
 def test_unavailable_calendar_stops_the_cycle(world):
     world.source.files["/a.md"] = event("u1", "One")
     world.source.files["/b.md"] = event("u1", "Two")

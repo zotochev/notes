@@ -28,7 +28,11 @@ class GoogleCalendar:
         self._retries = retries
 
     def insert(self, calendar_id: str, event_id: str, body: dict[str, Any]) -> None:
-        self._execute(self._service.events().insert(calendarId=calendar_id, body={**body, "id": event_id}))
+        try:
+            self._execute(self._service.events().insert(calendarId=calendar_id, body={**body, "id": event_id}))
+        except EventNotFound as e:
+            # A new event cannot be "not found": it is the calendar that is missing.
+            raise CalendarError(f"календарь {calendar_id} не найден или недоступен этому аккаунту") from e
 
     def update(self, calendar_id: str, event_id: str, body: dict[str, Any]) -> None:
         event = self._execute(

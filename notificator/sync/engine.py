@@ -72,6 +72,8 @@ class SyncEngine:
         self._settings = settings
         self._clock = clock or (lambda: datetime.now(settings.default_tz))
         self._new_event_id = new_event_id
+        # Sync errors already reported, so a failure repeated every cycle is journalled once.
+        self._known_errors: set[tuple[str, str | None, str]] = set()
 
     def run_cycle(self, allow_mass_delete: bool = False) -> CycleReport:
         report = CycleReport()
@@ -90,6 +92,9 @@ class SyncEngine:
         report.listed = len(listing)
         versions = self._store.file_versions(self._source_id)
         tracked = self._store.tracked(self._source_id)
+        self._known_errors = {
+            (i.path, i.uid, i.message) for i in self._store.issues(self._source_id) if i.kind == "sync"
+        }
 
         plans: dict[str, list[Action]] = {}
         to_read = files_to_read(listing.values(), versions)
@@ -176,7 +181,8 @@ class SyncEngine:
             except CalendarError as e:
                 report.failed += 1
                 errors.append((action.key.uid, str(e)))
-                self._store.log(action.key, "error", str(e))
+                if (path, action.key.uid, str(e)) not in self._known_errors:
+                    self._store.log(action.key, "error", str(e))
         self._store.set_issues(self._source_id, path, "sync", errors)
         return not errors and not held
 

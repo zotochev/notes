@@ -54,6 +54,15 @@ def test_insert_of_existing_id():
         cal.insert("primary", "abc123", BODY)
 
 
+def test_insert_into_missing_calendar_names_the_calendar():
+    cal, _ = calendar(error(404, "notFound", "Not Found"))
+
+    with pytest.raises(CalendarError, match="календарь work@example.com не найден") as info:
+        cal.insert("work@example.com", "abc123", BODY)
+
+    assert not isinstance(info.value, EventNotFound)
+
+
 def test_update_patches_the_event():
     cal, http = calendar((200, {"id": "abc123", "status": "confirmed"}))
 
