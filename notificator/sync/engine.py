@@ -92,9 +92,8 @@ class SyncEngine:
         report.listed = len(listing)
         versions = self._store.file_versions(self._source_id)
         tracked = self._store.tracked(self._source_id)
-        self._known_errors = {
-            (i.path, i.uid, i.message) for i in self._store.issues(self._source_id) if i.kind == "sync"
-        }
+        issues = self._store.issues(self._source_id)
+        self._known_errors = {(i.path, i.uid, i.message) for i in issues if i.kind == "sync"}
 
         plans: dict[str, list[Action]] = {}
         to_read = files_to_read(listing.values(), versions)
@@ -122,12 +121,16 @@ class SyncEngine:
         for path, actions in plans.items():
             complete = self._apply(path, actions, tracked.get(path, {}), report, hold_deletes)
             if complete:
-                # Only now is the file "done": until then it is read again every cycle.
                 self._store.set_file_version(self._source_id, path, listing[path].version)
+            else:
+                # Not done: forget the version so the file is read again every
+                # cycle, even if it is put back exactly as it was.
+                self._store.clear_file_version(self._source_id, path)
         for path, deletes in vanished.items():
             if self._apply(path, deletes, tracked[path], report, hold_deletes):
                 self._store.forget_file(self._source_id, path)
-        for path in versions.keys() - listing.keys() - tracked.keys():
+        remembered = versions.keys() | {i.path for i in issues}
+        for path in remembered - listing.keys() - tracked.keys():
             self._store.forget_file(self._source_id, path)
 
     def _is_watched(self, path: str) -> bool:
@@ -148,6 +151,7 @@ class SyncEngine:
             if isinstance(result, SourceError):
                 report.read_failed += 1
                 self._store.set_issues(self._source_id, file.path, "source", [(None, str(result))])
+                self._store.clear_file_version(self._source_id, file.path)
             else:
                 report.read += 1
                 self._store.set_issues(self._source_id, file.path, "source", [])

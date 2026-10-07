@@ -215,6 +215,88 @@ def test_calendar_failure_for_one_event_is_reported_and_retried(world):
     assert world.calendar.calls.count("insert") == 3
 
 
+def test_sync_error_is_cleared_when_the_file_is_put_back_as_it_was(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.sync()
+    world.source.files["/a.md"] = event("u1", "Meeting", location="Rejected place")
+    world.calendar.fail_next = CalendarError("rejected")
+    world.sync()
+    assert len(world.store.issues("cloud")) == 1
+
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    report = world.sync()
+
+    assert world.store.issues("cloud") == []
+    assert report.pushed == 0
+
+
+def test_read_error_is_cleared_when_the_file_is_put_back_as_it_was(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.sync()
+    world.source.files["/a.md"] = event("u1", "Changed")
+    world.source.fail_reading = {"/a.md"}
+    world.sync()
+    assert len(world.store.issues("cloud")) == 1
+
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.source.fail_reading = set()
+    world.sync()
+
+    assert world.store.issues("cloud") == []
+
+
+def test_sync_error_is_cleared_when_the_failing_event_is_removed(world):
+    world.source.files["/a.md"] = event("u1", "Good") + event("u2", "Bad")
+    world.calendar.fail_next = CalendarError("rejected")
+    world.sync()
+    world.sync()
+
+    world.source.files["/a.md"] = event("u2", "Bad")
+    world.calendar.fail_next = None
+    world.sync()
+    world.source.files["/a.md"] = ""
+    world.sync()
+
+    assert world.store.issues("cloud") == []
+    assert world.calendar.summaries() == []
+
+
+def test_event_that_failed_in_a_missing_calendar_is_created_once_the_calendar_is_fixed(world):
+    world.source.files["/a.md"] = event("u1", "Meeting", calendar_id="no-such-calendar")
+    world.calendar.fail_next = CalendarError("calendar not found")
+    world.sync()
+    assert world.calendar.summaries() == []
+
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.sync()
+
+    assert world.calendar.summaries("primary") == ["Meeting"]
+    assert world.store.issues("cloud") == []
+
+
+def test_issues_of_a_vanished_file_are_removed(world):
+    world.source.files["/unreadable.md"] = event("u1", "Never read")
+    world.source.files["/broken.md"] = event("u1", "Broken", start="не дата")
+    world.source.fail_reading = {"/unreadable.md"}
+    world.sync()
+    assert {i.kind for i in world.store.issues("cloud")} == {"source", "parse"}
+
+    world.source.files.clear()
+    world.sync()
+
+    assert world.store.issues("cloud") == []
+
+
+def test_issues_survive_restart(world, tmp_path):
+    world.source.files["/a.md"] = event("u1", "Broken", start="не дата")
+    world.sync()
+    world.store.close()
+
+    world.store = Store(tmp_path / "state.db")
+
+    assert [i.kind for i in world.store.issues("cloud")] == ["parse"]
+
+
 def test_repeated_failure_is_journalled_once(world):
     world.source.files["/a.md"] = event("u1", "One")
 

@@ -98,6 +98,11 @@ class Store:
                 (source, path, version),
             )
 
+    def clear_file_version(self, source: str, path: str) -> None:
+        """Make the file count as changed, so the next cycle reads it again."""
+        with self._db:
+            self._db.execute("DELETE FROM files WHERE source = ? AND path = ?", (source, path))
+
     def forget_file(self, source: str, path: str) -> None:
         """Drop the version and issues of a file. Its events are removed separately, one by one."""
         with self._db:
