@@ -1,0 +1,23 @@
+[Unit]
+Description=notificator - calendar events from notes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/WorkingDirectory/ExecStart to match where the repo is actually
+# cloned and which user should own the process (avoid running as root).
+# data/ (config.json, Google credentials, state.db) is resolved relative to
+# WorkingDirectory.
+User=crip
+WorkingDirectory=/opt/notificator
+ExecStart=/opt/notificator/.venv/bin/python -m notificator run
+Restart=on-failure
+RestartSec=10
+# On stop a sync cycle that is already running is allowed to finish
+TimeoutStopSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

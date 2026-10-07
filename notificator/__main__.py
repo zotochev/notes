@@ -58,7 +58,8 @@ def _plan(config, data_dir: Path, source_name: str | None) -> int:
         body = call.body or {}
         when = body.get("start", {}).get("dateTime", "")
         where = (body.get("description") or "\n").splitlines()[1:2]
-        print(f"  {names[call.action]:9} {when:26} {body.get('summary', call.event_id)!r} {' '.join(where)} -> {call.calendar_id}")
+        what = repr(body["summary"]) if body else f"событие {call.event_id}"
+        print(f"  {names[call.action]:9} {when:26} {what} {' '.join(where)} -> {call.calendar_id}")
     if not result.calls:
         print("  Изменений нет.")
     if result.deletes_need_approval:
