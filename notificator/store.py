@@ -84,6 +84,20 @@ class Store:
     def close(self) -> None:
         self._db.close()
 
+    def __enter__(self) -> Store:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def backup_to(self, path: str | Path) -> None:
+        """Write a consistent copy of the database to another file."""
+        target = sqlite3.connect(str(path))
+        try:
+            self._db.backup(target)
+        finally:
+            target.close()
+
     # --- files ---
 
     def file_versions(self, source: str) -> dict[str, str]:

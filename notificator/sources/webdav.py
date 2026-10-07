@@ -10,7 +10,6 @@ like deleted files.
 """
 from __future__ import annotations
 
-import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +19,7 @@ from urllib.parse import quote, unquote, urlparse
 import requests
 
 from notificator.core.model import RemoteFile
+from notificator.sources.http import DEFAULT_RETRY_DELAYS, send
 from notificator.sync.ports import SourceError
 
 _DAV = "{DAV:}"
@@ -30,7 +30,6 @@ _PROPFIND_BODY = (
     "<D:resourcetype/><D:getetag/><D:getlastmodified/><D:getcontentlength/><oc:privatelink/>"
     "</D:prop></D:propfind>"
 ).encode()
-_RETRY_STATUSES = (502, 503, 504)
 
 
 class _InfinityNotSupported(Exception):
@@ -56,7 +55,7 @@ class WebDavSource:
         depth_infinity: bool = True,
         concurrency: int = 8,
         timeout: float = 60,
-        retry_delays: tuple[float, ...] = (0.5, 2.0),
+        retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
     ) -> None:
         """`password` is called for every request batch, so a rotating token can be supplied."""
         self._base_url = url.rstrip("/")
@@ -145,20 +144,10 @@ class WebDavSource:
         return _Entry(path, is_dir=False, version=version, link=prop.findtext(f"{_OC}privatelink") or None)
 
     def _send(self, method: str, path: str, auth: tuple[str, str], **kwargs) -> requests.Response:
-        url = self._base_url + quote(path, safe="/")
-        for delay in (*self._retry_delays, None):
-            try:
-                response = requests.request(
-                    method, url, auth=auth, verify=self._verify_ssl, timeout=self._timeout, **kwargs
-                )
-            except requests.RequestException as e:
-                if delay is None:
-                    raise SourceError(f"{method} {path}: {e}") from e
-            else:
-                if response.status_code not in _RETRY_STATUSES or delay is None:
-                    return response
-            time.sleep(delay)
-        raise AssertionError("unreachable")
+        return send(
+            method, self._base_url + quote(path, safe="/"), self._retry_delays,
+            auth=auth, verify=self._verify_ssl, timeout=self._timeout, **kwargs,
+        )
 
 
 def _normalize(path: str) -> str:
