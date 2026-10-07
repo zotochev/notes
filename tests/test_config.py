@@ -39,6 +39,16 @@ def test_each_source_type_builds_its_source(tmp_path):
     assert built == {"cloud": WebDavSource, "sea": SeafileSource, "disk": LocalSource}
 
 
+def test_disabled_ssl_verification_is_reported_once_in_the_log(tmp_path, caplog):
+    insecure = {**VALID, "sources": {"cloud": {**VALID["sources"]["cloud"], "verify_ssl": False}}}
+    config = load_config(write(tmp_path, {**insecure, "active_source": "cloud"}))
+
+    with caplog.at_level("WARNING"):
+        build_source(config.sources["cloud"])
+
+    assert ["verify_ssl: false" in r.getMessage() for r in caplog.records] == [True]
+
+
 def test_extensions_are_normalized(tmp_path):
     config = load_config(write(tmp_path, {**VALID, "extensions": ["MD", ".Txt", " ", ".md"]}))
 
