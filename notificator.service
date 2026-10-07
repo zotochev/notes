@@ -9,7 +9,7 @@ Type=simple
 # cloned and which user should own the process (avoid running as root).
 # data/ (config.json, Google credentials, state.db) is resolved relative to
 # WorkingDirectory.
-User=crip
+User=medved
 WorkingDirectory=/opt/notificator
 ExecStart=/opt/notificator/.venv/bin/python -m notificator run
 Restart=on-failure
