@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import threading
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
+
+import requests
 
 from notificator.core.model import RemoteFile
 from notificator.sources.batching import Folder, Level, TreeWalker
@@ -51,6 +53,8 @@ class SeafileSource:
         self._token: str | None = None
         self._repo_ids: dict[str, str] = {}
         self.walker = TreeWalker(self._level, max_concurrency=concurrency)
+        # Which address file downloads work at: the one in Seafile's links, or the one this source was given.
+        self._download_as_given = False
 
     def list_files(self) -> list[RemoteFile]:
         repo_ids = self._load_repo_ids()
@@ -97,12 +101,42 @@ class SeafileSource:
         library, inner = _split(file.path)
         repo_id = self._repo_id(library)
         download_url = self._get(f"/api2/repos/{repo_id}/file/", {"p": inner, "reuse": "1"})
-        response = send(
-            "GET", download_url, self._retry_delays, verify=self._verify_ssl, timeout=self._timeout
+        if not isinstance(download_url, str):
+            raise SourceError(f"не удалось скачать {file.path}: Seafile не дал ссылку на файл")
+        return self._download(download_url, file.path).content.decode("utf-8", errors="ignore")
+
+    def _download(self, given: str, path: str) -> requests.Response:
+        """Fetch a file by the link Seafile gave, making sure the answer is the file.
+
+        The link is built from Seafile's own idea of its address, which may be
+        stale or unreachable from here, and another server at that address may
+        answer 200 with a page of its own. Text that is not the file would
+        read as "no events", so an answer is taken only when it carries the
+        Content-Disposition header the Seafile file server always sends. The
+        same link is also tried at the address this source was given.
+        """
+        ours = urlunsplit((*urlsplit(self._url)[:2], *urlsplit(given)[2:]))
+        candidates = list(dict.fromkeys([ours, given]))
+        if self._download_as_given:
+            candidates.reverse()
+        problems: list[str] = []
+        for url in candidates:
+            where = "{0}://{1}".format(*urlsplit(url)[:2])
+            try:
+                response = send("GET", url, self._retry_delays, verify=self._verify_ssl, timeout=self._timeout)
+            except SourceError as e:
+                problems.append(str(e))
+                continue
+            if response.status_code == 200 and "Content-Disposition" in response.headers:
+                # Remembered, so that the address that does not work is not tried first for every file.
+                self._download_as_given = url == given
+                return response
+            kind = response.headers.get("Content-Type", "без типа")
+            problems.append(f"{where} ответил HTTP {response.status_code} ({kind}), но это не файл")
+        raise SourceError(
+            f"не удалось скачать {path}: {'; '.join(problems)}. "
+            "Проверьте адрес файлового сервера (FILE_SERVER_ROOT) в настройках Seafile"
         )
-        if response.status_code != 200:
-            raise SourceError(f"не удалось скачать {file.path}: HTTP {response.status_code}")
-        return response.content.decode("utf-8", errors="ignore")
 
     def _remote_file(self, library: str, repo_id: str, inner: str, object_id: str) -> RemoteFile:
         return RemoteFile(

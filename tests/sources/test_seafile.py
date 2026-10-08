@@ -3,7 +3,7 @@ import pytest
 from notificator.core.model import RemoteFile
 from notificator.sources.seafile import SeafileSource
 from notificator.sync.ports import SourceError
-from tests.sources.seafile_server import PASSWORD, USER, FakeSeafile
+from tests.sources.seafile_server import PASSWORD, USER, FakeOtherSite, FakeSeafile
 
 
 @pytest.fixture
@@ -11,6 +11,14 @@ def server():
     srv = FakeSeafile()
     srv.libraries["mylib"] = {"/bar.md": "bar", "/notes/план.md": "план", "/notes/deep/c.txt": "c", "/other/d.md": "d"}
     srv.libraries["work"] = {"/w.md": "w"}
+    yield srv
+    srv.shutdown()
+    srv.server_close()
+
+
+@pytest.fixture
+def other_site():
+    srv = FakeOtherSite()
     yield srv
     srv.shutdown()
     srv.server_close()
@@ -196,3 +204,36 @@ def test_links_use_the_public_address_when_one_is_given(server):
 
     assert links["/mylib/bar.md"] == "https://cloud.example.com:8443/lib/id-mylib/file/bar.md"
     assert src.stat("/mylib/bar.md").link == links["/mylib/bar.md"]
+
+
+def test_file_is_read_at_our_own_address_when_seafile_links_point_to_another_site(server, other_site):
+    server.file_server_root = other_site.url
+
+    assert source(server).read_text(RemoteFile("/mylib/bar.md", "v")) == "bar"
+    assert other_site.requests == 0
+
+
+def test_page_of_another_site_is_never_taken_for_the_file(server, other_site):
+    server.file_server_root = other_site.url
+    server.serves_files = False
+
+    with pytest.raises(SourceError, match="это не файл.*FILE_SERVER_ROOT"):
+        source(server).read_text(RemoteFile("/mylib/bar.md", "v"))
+    assert other_site.requests == 1
+
+
+def test_address_from_seafile_links_is_used_when_ours_has_no_file_server(server):
+    files = FakeSeafile()
+    files.libraries = server.libraries
+    try:
+        server.file_server_root = files.url
+        server.serves_files = False
+        src = source(server)
+
+        assert src.read_text(RemoteFile("/mylib/bar.md", "v")) == "bar"
+        assert src.read_text(RemoteFile("/mylib/other/d.md", "v")) == "d"
+        # The address that does not work is tried once, not for every file.
+        assert (server.downloads, files.downloads) == (1, 2)
+    finally:
+        files.shutdown()
+        files.server_close()

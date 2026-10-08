@@ -10,6 +10,35 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 USER, PASSWORD = "me@example.com", "secret"
 
 
+class FakeOtherSite(ThreadingHTTPServer):
+    """Some other web application: answers every request with its own page and HTTP 200."""
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _OtherSiteHandler)
+        self.requests = 0
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server_address[1]}"
+
+
+class _OtherSiteHandler(BaseHTTPRequestHandler):
+    server: FakeOtherSite
+
+    def log_message(self, *args) -> None:
+        pass
+
+    def do_GET(self) -> None:
+        self.server.requests += 1
+        data = b"<!DOCTYPE html><html><body>another application</body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
 class FakeSeafile(ThreadingHTTPServer):
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
@@ -22,6 +51,11 @@ class FakeSeafile(ThreadingHTTPServer):
         self.listings: list[tuple[str, bool]] = []
         self.parent_dir_trailing_slash = False
         self.logins = 0
+        # The address Seafile puts into download links; None means its real one.
+        self.file_server_root: str | None = None
+        # False: this address has no file server behind it (the API is reached past the proxy that has it).
+        self.serves_files = True
+        self.downloads = 0
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -62,8 +96,15 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path in self.server.broken:
             self._json(500, {})
         elif parts[0] == "seafhttp":
+            self.server.downloads += 1
+            if not self.server.serves_files:
+                self._json(404, {})
+                return
             library, inner = parts[2], "/" + unquote("/".join(parts[3:]))
-            self._reply(200, self.server.libraries[library][inner].encode("utf-8"))
+            self._reply(
+                200, self.server.libraries[library][inner].encode("utf-8"),
+                {"Content-Disposition": "attachment;filename*=\"utf-8' 'file\""},
+            )
         elif self.headers.get("Authorization") != f"Token {self.server.token}":
             self._json(401, {"detail": "Invalid token"})
         elif url.path == "/api2/repos/":
@@ -85,7 +126,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error_msg": "File not found"})
         elif kind == "file":
             if path in files:
-                self._json(200, f"{self.server.url}/seafhttp/files/{library}{quote(path)}")
+                root = self.server.file_server_root or self.server.url
+                self._json(200, f"{root}/seafhttp/files/{library}{quote(path)}")
             else:
                 self._json(404, {"error_msg": "File not found"})
         elif path.rstrip("/") not in self.server.folders(library) and path != "/":
@@ -125,8 +167,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _json(self, status: int, payload) -> None:
         self._reply(status, json.dumps(payload).encode("utf-8"))
 
-    def _reply(self, status: int, data: bytes) -> None:
+    def _reply(self, status: int, data: bytes, headers: dict[str, str] | None = None) -> None:
         self.send_response(status)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
