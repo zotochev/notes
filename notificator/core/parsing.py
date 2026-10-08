@@ -107,16 +107,14 @@ def parse_text(
 
 
 def parse_csv(text: str, ctx: ParseContext) -> ParseResult:
-    """Parse CSV with a header row; `attendees` are separated by `;`. Rows without uid are skipped."""
+    """Parse CSV with a header row; `attendees` are separated by `;`. Rows without uid are skipped.
+
+    A CSV without the required columns is not an events table: it is ignored, like a file with no events.
+    """
     collector = _Collector()
     reader = csv.DictReader(io.StringIO(text.lstrip("﻿")))
     columns = {name.strip().lower() for name in reader.fieldnames or [] if name}
-    if not columns:
-        collector.fail("CSV пуст или не содержит строки заголовков", None, None)
-        return collector.result()
-    missing = [c for c in _CSV_REQUIRED if c not in columns]
-    if missing:
-        collector.fail(f"в CSV нет обязательных колонок: {', '.join(missing)}", None, None)
+    if any(c not in columns for c in _CSV_REQUIRED):
         return collector.result()
 
     for row_num, row in enumerate(reader, start=2):

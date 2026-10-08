@@ -213,9 +213,9 @@ def test_csv_duplicate_uid():
 
 
 @pytest.mark.parametrize("text", ["", "uid,summary\na1,S\n"])
-def test_csv_without_usable_header_confirms_nothing(text):
+def test_csv_without_required_columns_is_ignored(text):
     result = parse_csv(text, CTX)
 
     assert result.events == ()
-    assert result.opaque_failure
-    assert not result.confirms_absent("a1")
+    assert result.issues == ()
+    assert not result.opaque_failure
