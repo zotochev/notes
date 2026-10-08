@@ -20,6 +20,16 @@ def main(argv: list[str] | None = None) -> int:
     old = commands.add_parser("import-old-state", help="перенести связи событий из state.json старой версии")
     old.add_argument("state_file", type=Path, help="путь к старому state.json")
     old.add_argument("--source", help="к какому источнику отнести события (по умолчанию активный)")
+    move = commands.add_parser(
+        "move-source", help="перенести связи событий на другой источник с теми же файлами, не пересоздавая события"
+    )
+    move.add_argument("old", help="имя источника, чьи события переносятся")
+    move.add_argument("new", help="имя источника из config.json, который их получит")
+    move.add_argument(
+        "--path", action="append", default=[], metavar="СТАРЫЙ=НОВЫЙ",
+        help="замена начала пути файла, например /Notes=/mylib/Notes; можно указать несколько раз",
+    )
+    move.add_argument("--apply", action="store_true", help="выполнить перенос, а не только показать")
     cleanup = commands.add_parser(
         "cleanup", help="найти в календарях события notificator, которых нет в текущем состоянии"
     )
@@ -36,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cleanup(config, args.data_dir, args.delete)
         if args.command == "import-old-state":
             return _import_old_state(config, args.data_dir, args.state_file, args.source)
+        if args.command == "move-source":
+            return _move_source(config, args.data_dir, args.old, args.new, args.path, args.apply)
     except ConfigError as e:
         print(f"Ошибка настроек: {e}", file=sys.stderr)
         return 2
@@ -76,6 +88,36 @@ def _import_old_state(config, data_dir: Path, state_file: Path, source_name: str
     for reason in result.skipped:
         print(f"  {reason}")
     print("Теперь выполните `plan`, чтобы увидеть, что сделает первый цикл.")
+    return 0
+
+
+def _move_source(config, data_dir: Path, old: str, new: str, rules: list[str], apply: bool) -> int:
+    from notificator.config import STATE_FILE
+    from notificator.migrate import move_source
+    from notificator.store import Store
+
+    if new not in config.sources:
+        raise ConfigError(f"источник {new!r} не описан в sources (есть: {sorted(config.sources)})")
+    if old == new or not rules or not all("=" in rule for rule in rules):
+        print("Ошибка: нужны два разных источника и хотя бы одно правило --path СТАРЫЙ=НОВЫЙ", file=sys.stderr)
+        return 1
+    prefixes = [tuple(rule.split("=", 1)) for rule in rules]
+    with Store(data_dir / STATE_FILE) as store:
+        if apply:
+            backup = data_dir / f"{STATE_FILE}.before-move"
+            store.backup_to(backup)
+            print(f"Копия состояния до переноса: {backup}")
+        result = move_source(store, old, new, prefixes, apply)
+    print(f"{'Перенесено' if apply else 'Будет перенесено'} событий: {result.moved} ({old} -> {new}). "
+          f"Не переносится: {len(result.skipped)}")
+    for before, after in result.examples:
+        print(f"  {before} -> {after}")
+    for reason in result.skipped:
+        print(f"  {reason}")
+    if not apply:
+        print("Ничего не изменено. Чтобы выполнить перенос, повторите команду с --apply.")
+    else:
+        print(f"Теперь сделайте {new!r} активным источником и выполните `plan`: ожидаются только «обновить».")
     return 0
 
 

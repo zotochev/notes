@@ -190,6 +190,15 @@ class Store:
                 (key.source, key.path, key.uid, gcal_event_id, calendar_id, fingerprint, _spec_json(spec)),
             )
 
+    def move_event(self, key: EventKey, new_key: EventKey) -> None:
+        """Give an event another identity, keeping its calendar event. The write counts as unconfirmed."""
+        with self._db:
+            self._db.execute(
+                "UPDATE events SET source = ?, path = ?, uid = ?, fingerprint = NULL "
+                "WHERE source = ? AND path = ? AND uid = ?",
+                (new_key.source, new_key.path, new_key.uid, key.source, key.path, key.uid),
+            )
+
     def delete_event(self, key: EventKey) -> None:
         with self._db:
             self._db.execute(
