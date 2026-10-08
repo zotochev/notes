@@ -596,3 +596,16 @@ def test_mass_deletion_in_one_file_is_held_too(world):
 
     assert (report.held_deletes, report.deleted) == (10, 0)
     assert len(world.calendar.summaries()) == 10
+
+
+def test_unchanged_file_with_a_parse_error_is_read_again_so_a_stale_error_goes_away(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.sync()
+    # An error left by an earlier version of the parser for a file that is fine now.
+    world.store.set_issues("cloud", "/a.md", "parse", [(None, "больше не ошибка")])
+    world.source.reads.clear()
+
+    world.sync()
+
+    assert world.source.reads == ["/a.md"]
+    assert world.store.issues() == []

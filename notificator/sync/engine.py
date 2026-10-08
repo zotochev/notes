@@ -118,7 +118,10 @@ class SyncEngine:
         self._known_errors = {(i.path, i.uid, i.message) for i in issues if i.kind == "sync"}
 
         plans: dict[str, list[Action]] = {}
-        to_read = files_to_read(listing.values(), versions)
+        # A file with a parse error is read every cycle even when unchanged:
+        # what counts as an error changes with the code, so the error may be gone.
+        unparsed = {i.path for i in issues if i.kind == "parse"}
+        to_read = files_to_read(listing.values(), {p: v for p, v in versions.items() if p not in unparsed})
         if to_read:
             self._say(
                 f"файлов в облаке {len(all_files)}, подходящих {len(listing)}, нужно прочитать {len(to_read)}"
