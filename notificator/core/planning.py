@@ -36,9 +36,18 @@ class Delete:
 Action = Push | Delete
 
 
+def applied_version(file: RemoteFile) -> str:
+    """What is remembered about a file once it is fully applied.
+
+    The link is part of it: it goes into every event of the file, so a file
+    whose link changed must be applied again even though its text did not.
+    """
+    return file.version if file.link is None else f"{file.version} {file.link}"
+
+
 def files_to_read(listing: Iterable[RemoteFile], known_versions: Mapping[str, str]) -> list[RemoteFile]:
-    """Files that are new or whose version differs from the one last fully applied."""
-    return [f for f in listing if known_versions.get(f.path) != f.version]
+    """Files that are new or differ from what was last fully applied."""
+    return [f for f in listing if known_versions.get(f.path) != applied_version(f)]
 
 
 def plan_file(

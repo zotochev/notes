@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 from notificator.core.model import RemoteFile, TrackedEvent
 from notificator.core.parsing import ParseContext, parse_file
 from notificator.core.planning import (
-    Action, Delete, Push, files_to_read, plan_file, plan_vanished, too_many_deletes,
+    Action, Delete, Push, applied_version, files_to_read, plan_file, plan_vanished, too_many_deletes,
 )
 from notificator.store import Store
 from notificator.sync.ports import (
@@ -243,7 +243,7 @@ class SyncEngine:
     ) -> None:
         """Apply the actions of a file that was read, and remember its version once nothing is left to do."""
         if self._apply(file.path, actions, tracked, report, hold_deletes):
-            self._store.set_file_version(self._source_id, file.path, file.version)
+            self._store.set_file_version(self._source_id, file.path, applied_version(file))
         else:
             # Not done: forget the version so the file is read again every
             # cycle, even if it is put back exactly as it was.

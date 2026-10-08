@@ -189,6 +189,24 @@ def test_file_link_is_put_into_the_description(world):
 # --- failures must never look like "the events are gone" ---
 
 
+def test_changed_file_link_updates_the_events_of_an_unchanged_file(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.source.files["/b.md"] = event("u1", "No link")
+    world.source.links["/a.md"] = "http://localhost:9201/a"
+    world.sync()
+    world.source.links["/a.md"] = "https://cloud.example.com/a"
+    world.source.reads.clear()
+
+    report = world.sync()
+
+    assert (world.source.reads, report.pushed) == (["/a.md"], 1)
+    (body,) = [b for b in world.calendar.events.values() if b["summary"] == "Meeting"]
+    assert "https://cloud.example.com/a" in body["description"]
+    world.source.reads.clear()
+    world.sync()
+    assert world.source.reads == []
+
+
 def test_failed_listing_changes_nothing(world):
     world.source.files["/a.md"] = event("u1", "Meeting")
     world.sync()
