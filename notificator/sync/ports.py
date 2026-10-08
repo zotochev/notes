@@ -37,8 +37,12 @@ class Source(Protocol):
         """Return every file under the watched paths. Must be complete or raise SourceError."""
         ...
 
-    def stat(self, path: str) -> RemoteFile:
-        """Return one file exactly as list_files would report it. Raises SourceError, also when it is missing."""
+    def stat(self, path: str) -> RemoteFile | None:
+        """Return one file exactly as list_files would report it, or None when it no longer exists.
+
+        None is as strong a claim as a listing without the file: when the watched
+        path around it cannot be confirmed to exist, raise SourceError instead.
+        """
         ...
 
     def read_text(self, file: RemoteFile) -> str:

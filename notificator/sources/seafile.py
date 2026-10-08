@@ -15,6 +15,10 @@ from notificator.sources.http import DEFAULT_RETRY_DELAYS, send
 from notificator.sync.ports import SourceError
 
 
+class _NotFound(SourceError):
+    pass
+
+
 class SeafileSource:
     def __init__(
         self,
@@ -57,10 +61,20 @@ class SeafileSource:
                     files[f"/{library}{inner}"] = self._remote_file(library, repo_id, inner, entry["id"])
         return list(files.values())
 
-    def stat(self, path: str) -> RemoteFile:
+    def stat(self, path: str) -> RemoteFile | None:
         library, inner = _split(path)
         repo_id = self._repo_id(library)
-        detail = self._get(f"/api2/repos/{repo_id}/file/detail/", {"p": inner})
+        try:
+            detail = self._get(f"/api2/repos/{repo_id}/file/detail/", {"p": inner})
+        except _NotFound:
+            # Gone for sure only while its library and watched folder are still there; this raises when not.
+            repo_id = self._load_repo_ids().get(library)
+            if repo_id is None:
+                raise SourceError(f"библиотека {library!r} не найдена в Seafile") from None
+            for lib, folder in self._watch:
+                if lib == library and folder != "/" and inner.startswith(folder + "/"):
+                    self._get(f"/api2/repos/{repo_id}/dir/", {"p": folder})
+            return None
         try:
             return self._remote_file(library, repo_id, inner, detail["id"])
         except (KeyError, TypeError) as e:
@@ -107,7 +121,8 @@ class SeafileSource:
                 self._token = None
             response = self._authorized_get(path, params)
         if response.status_code != 200:
-            raise SourceError(f"Seafile ответил HTTP {response.status_code} на {path}: {response.text[:200]}")
+            error = _NotFound if response.status_code == 404 else SourceError
+            raise error(f"Seafile ответил HTTP {response.status_code} на {path}: {response.text[:200]}")
         try:
             return response.json()
         except ValueError as e:

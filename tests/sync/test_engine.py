@@ -533,7 +533,7 @@ def test_one_file_is_synced_without_listing_the_source(world):
     world.sync()
     world.source.files["/a.md"] = event("u1", "Renamed")
     world.source.files["/b.md"] = event("u1", "Not asked for")
-    world.source.fail_listing = True
+    world.source.list_files = lambda: 1 / 0
     world.source.reads.clear()
 
     report = world.engine.sync_file("/a.md")
@@ -566,16 +566,32 @@ def test_syncing_a_file_clears_its_fixed_issue(world):
     assert world.store.issues() == []
 
 
-def test_syncing_a_missing_file_keeps_its_events(world):
-    world.source.files["/a.md"] = event("u1", "Meeting")
+def test_syncing_a_file_that_is_gone_deletes_its_events_and_issues(world):
+    world.source.files["/a.md"] = event("u1", "Meeting") + event("u2", "Broken", start="не дата")
     world.sync()
     del world.source.files["/a.md"]
 
     report = world.engine.sync_file("/a.md")
 
-    assert "файл не прочитан" in report.error
-    assert world.calendar.summaries() == ["Meeting"]
-    assert [i.kind for i in world.store.issues()] == ["source"]
+    assert (report.deleted, report.error) == (1, None)
+    assert world.calendar.summaries() == []
+    assert world.store.issues() == []
+    assert world.store.file_versions("cloud") == {}
+
+
+def test_syncing_a_file_that_cannot_be_checked_or_read_keeps_its_events(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.source.files["/b.md"] = event("u1", "Other")
+    world.sync()
+    world.source.fail_reading = {"/a.md"}
+    unread = world.engine.sync_file("/a.md")
+    del world.source.files["/b.md"]
+    world.source.fail_listing = True
+    unchecked = world.engine.sync_file("/b.md")
+
+    assert "файл не прочитан" in unread.error and "файл не прочитан" in unchecked.error
+    assert world.calendar.summaries() == ["Meeting", "Other"]
+    assert [(i.path, i.kind) for i in world.store.issues()] == [("/a.md", "source"), ("/b.md", "source")]
 
 
 def test_unknown_file_is_not_synced_on_request(world):

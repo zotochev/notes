@@ -40,6 +40,10 @@ class _InfinityNotSupported(Exception):
     pass
 
 
+class _NotFound(SourceError):
+    pass
+
+
 class _TooBigForOneRequest(Exception):
     """A whole-tree request failed in a way that asking for less may fix: timeout, 5xx, cut-off answer."""
 
@@ -92,10 +96,17 @@ class WebDavSource:
                         files[entry.path] = RemoteFile(entry.path, entry.version, entry.link)
         return list(files.values())
 
-    def stat(self, path: str) -> RemoteFile:
-        entries = self._propfind(path, "0", (self._username, self._password()))
+    def stat(self, path: str) -> RemoteFile | None:
+        auth = (self._username, self._password())
+        try:
+            entries = self._propfind(path, "0", auth)
+        except _NotFound:
+            # Gone for sure only while its watch path is still there; this raises when it is not.
+            root = next((w for w in self._watch_paths if w == "/" or path.startswith(w + "/")), "/")
+            self._propfind(root, "0", auth)
+            return None
         if len(entries) != 1 or entries[0].is_dir:
-            raise SourceError(f"файл не найден: {path}")
+            raise SourceError(f"это не файл: {path}")
         return RemoteFile(path, entries[0].version, entries[0].link)
 
     def read_text(self, file: RemoteFile) -> str:
@@ -148,7 +159,7 @@ class WebDavSource:
         if status in (401, 403):
             raise SourceError(f"ошибка авторизации WebDAV (HTTP {status}) для {path}")
         if status == 404:
-            raise SourceError(f"не найдено на сервере: {path}")
+            raise _NotFound(f"не найдено на сервере: {path}")
         if status != 207:
             raise SourceError(f"не удалось получить список {path}: HTTP {status}")
         try:

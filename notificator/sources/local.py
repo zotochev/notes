@@ -25,14 +25,17 @@ class LocalSource:
                 raise SourceError(f"не удалось прочитать каталог {root}: {e}") from e
         return list(files.values())
 
-    def stat(self, path: str) -> RemoteFile:
+    def stat(self, path: str) -> RemoteFile | None:
         file = Path(path)
         try:
-            if not file.is_file():
-                raise SourceError(f"файл не найден: {path}")
-            return _remote_file(file)
+            if file.is_file():
+                return _remote_file(file)
         except OSError as e:
             raise SourceError(f"не удалось прочитать файл: {e}") from e
+        if not any(root in file.parents and root.is_dir() for root in self._roots):
+            # As in a listing: a missing root may be an unmounted disk.
+            raise SourceError(f"каталог недоступен: {file.parent}")
+        return None
 
     def read_text(self, file: RemoteFile) -> str:
         try:

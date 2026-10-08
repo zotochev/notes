@@ -54,6 +54,10 @@ def test_stat_reports_a_file_as_the_listing_does(tmp_path):
     assert source.stat(listed.path) == listed
 
 
-def test_stat_of_a_missing_file_is_an_error(tmp_path):
+def test_stat_of_a_missing_file_says_it_is_gone(tmp_path):
+    assert LocalSource([tmp_path]).stat((tmp_path / "gone.md").as_posix()) is None
+
+
+def test_stat_does_not_call_a_file_gone_when_its_root_is_missing(tmp_path):
     with pytest.raises(SourceError):
-        LocalSource([tmp_path]).stat((tmp_path / "gone.md").as_posix())
+        LocalSource([tmp_path / "unmounted"]).stat((tmp_path / "unmounted" / "a.md").as_posix())

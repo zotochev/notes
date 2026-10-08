@@ -185,7 +185,13 @@ def test_stat_reports_a_file_as_the_listing_does(server):
     assert src.stat("/Мои заметки/план на год.md") == listed["/Мои заметки/план на год.md"]
 
 
-@pytest.mark.parametrize("path", ["/gone.md", "/notes"])
-def test_stat_of_a_missing_file_or_a_directory_is_an_error(server, path):
+def test_stat_of_a_missing_file_says_it_is_gone(server):
+    assert source(server).stat("/notes/gone.md") is None
+    assert source(server, watch_paths=["/notes"]).stat("/notes/deep/gone.md") is None
+
+
+def test_stat_does_not_call_a_file_gone_when_its_watch_path_is_missing_or_it_is_a_directory(server):
     with pytest.raises(SourceError):
-        source(server).stat(path)
+        source(server, watch_paths=["/unmounted"]).stat("/unmounted/a.md")
+    with pytest.raises(SourceError):
+        source(server).stat("/notes")

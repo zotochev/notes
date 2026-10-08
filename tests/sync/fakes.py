@@ -20,9 +20,11 @@ class FakeSource:
             raise SourceError("listing failed")
         return [RemoteFile(p, version=str(hash(t)), link=self.links.get(p)) for p, t in self.files.items()]
 
-    def stat(self, path: str) -> RemoteFile:
+    def stat(self, path: str) -> RemoteFile | None:
+        if self.fail_listing:
+            raise SourceError("stat failed")
         if path not in self.files:
-            raise SourceError(f"no such file {path}")
+            return None
         return RemoteFile(path, version=str(hash(self.files[path])), link=self.links.get(path))
 
     def read_text(self, file: RemoteFile) -> str:

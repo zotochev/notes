@@ -123,6 +123,19 @@ def test_stat_reports_a_file_as_the_listing_does(server):
     assert source(server).stat("/mylib/notes/план.md") == listed["/mylib/notes/план.md"]
 
 
-def test_stat_of_a_missing_file_is_an_error(server):
+def test_stat_of_a_missing_file_says_it_is_gone(server):
+    assert source(server).stat("/mylib/gone.md") is None
+    assert source(server, ["/mylib/notes"]).stat("/mylib/notes/gone.md") is None
+
+
+def test_stat_does_not_call_a_file_gone_when_its_library_or_watched_folder_is_missing(server):
+    folder_gone = source(server, ["/mylib/notes"])
+    library_gone = source(server)
+    library_gone.list_files()
+    del server.libraries["mylib"]["/notes/план.md"], server.libraries["mylib"]["/notes/deep/c.txt"]
+
     with pytest.raises(SourceError):
-        source(server).stat("/mylib/gone.md")
+        folder_gone.stat("/mylib/notes/план.md")
+    del server.libraries["mylib"]
+    with pytest.raises(SourceError):
+        library_gone.stat("/mylib/bar.md")

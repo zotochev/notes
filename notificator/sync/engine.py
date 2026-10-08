@@ -177,8 +177,9 @@ class SyncEngine:
     def sync_file(self, path: str) -> CycleReport:
         """Read one file and apply it now, without listing the source.
 
-        Only a file the store already knows is accepted. Nothing is concluded
-        from the file being missing: its events are left for a full cycle.
+        Only a file the store already knows is accepted. A file the source
+        says is gone is treated as a listing without it would be: its events
+        are deleted and it is forgotten.
         """
         report = CycleReport()
         try:
@@ -198,23 +199,25 @@ class SyncEngine:
             return
         self._known_errors = {(i.path, i.uid, i.message) for i in issues if i.kind == "sync"}
         self._say(f"синхронизирую файл {path}…")
+        in_file = tracked.get(path, {})
         try:
             file = self._source.stat(path)
-            text = self._source.read_text(file)
+            text = self._source.read_text(file) if file else ""
         except SourceError as e:
             report.read_failed = 1
             self._store.set_issues(self._source_id, path, "source", [(None, str(e))])
             self._store.clear_file_version(self._source_id, path)
             report.error = f"файл не прочитан: {e}"
             return
-        report.read = 1
-        self._store.set_issues(self._source_id, path, "source", [])
-
-        ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
-        parsed = parse_file(path, text, ctx)
-        self._store.set_issues(self._source_id, path, "parse", [(i.uid, i.message) for i in parsed.issues])
-        in_file = tracked.get(path, {})
-        actions = plan_file(self._source_id, file, parsed, in_file, self._settings.default_calendar)
+        if file is None:
+            actions: list[Action] = [Delete(t.key) for t in in_file.values()]
+        else:
+            report.read = 1
+            self._store.set_issues(self._source_id, path, "source", [])
+            ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
+            parsed = parse_file(path, text, ctx)
+            self._store.set_issues(self._source_id, path, "parse", [(i.uid, i.message) for i in parsed.issues])
+            actions = plan_file(self._source_id, file, parsed, in_file, self._settings.default_calendar)
         delete_count = sum(isinstance(a, Delete) for a in actions)
         hold_deletes = too_many_deletes(
             delete_count, sum(len(events) for events in tracked.values()),
@@ -225,7 +228,10 @@ class SyncEngine:
         self._applied = 0
         self._to_apply = len(actions) - report.held_deletes
         self._last_progress = time.monotonic()
-        self._apply_file(file, actions, in_file, report, hold_deletes)
+        if file is not None:
+            self._apply_file(file, actions, in_file, report, hold_deletes)
+        elif self._apply(path, actions, in_file, report, hold_deletes):
+            self._store.forget_file(self._source_id, path)
 
     def _apply_file(
         self,
