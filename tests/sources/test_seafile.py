@@ -139,3 +139,51 @@ def test_stat_does_not_call_a_file_gone_when_its_library_or_watched_folder_is_mi
     del server.libraries["mylib"]
     with pytest.raises(SourceError):
         library_gone.stat("/mylib/bar.md")
+
+
+def test_listing_asks_one_folder_at_a_time_and_never_a_whole_tree(server):
+    source(server).list_files()
+
+    assert sorted(server.listings) == [("/", False), ("/notes", False), ("/notes/deep", False), ("/other", False)]
+
+
+def test_unchanged_folders_are_not_listed_again(server):
+    src = source(server)
+    before = src.list_files()
+    server.listings.clear()
+
+    after = src.list_files()
+
+    assert server.listings == [("/", False)]
+    assert {f.path: f for f in after} == {f.path: f for f in before}
+
+
+def test_only_the_changed_branch_is_listed_again(server):
+    src = source(server)
+    src.list_files()
+    server.libraries["mylib"]["/notes/deep/c.txt"] = "changed"
+    server.libraries["mylib"]["/notes/deep/new.md"] = "new"
+    del server.libraries["mylib"]["/other/d.md"]
+    server.listings.clear()
+
+    files = {f.path: f for f in src.list_files()}
+
+    assert sorted(server.listings) == [("/", False), ("/notes", False), ("/notes/deep", False)]
+    assert files == {f.path: f for f in source(server).list_files()}
+    assert "/mylib/notes/deep/new.md" in files and "/mylib/other/d.md" not in files
+
+
+def test_only_watched_folders_are_listed(server):
+    source(server, ["/mylib/notes"]).list_files()
+
+    assert sorted(server.listings) == [("/notes", False), ("/notes/deep", False)]
+
+
+def test_folder_that_cannot_be_listed_fails_the_listing(server):
+    src = source(server)
+    src.list_files()
+    server.libraries["mylib"]["/notes/план.md"] = "changed"
+    server.broken = {"/api/v2.1/repos/id-mylib/dir/"}
+
+    with pytest.raises(SourceError):
+        src.list_files()

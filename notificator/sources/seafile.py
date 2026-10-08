@@ -3,6 +3,11 @@ Files in Seafile libraries, read through the Seafile REST API.
 
 Paths look like "/<library name>/<path inside the library>", so a watch path
 "/mylib/notes" means the folder "notes" of the library "mylib".
+
+Listing asks for one folder at a time, never for a whole tree: a recursive
+listing of a big library can occupy the server for minutes. A folder's id is
+a hash of everything under it, so an unchanged folder is not listed again;
+see notificator.sources.batching.
 """
 from __future__ import annotations
 
@@ -11,6 +16,7 @@ from typing import Any
 from urllib.parse import quote
 
 from notificator.core.model import RemoteFile
+from notificator.sources.batching import Folder, Level, TreeWalker
 from notificator.sources.http import DEFAULT_RETRY_DELAYS, send
 from notificator.sync.ports import SourceError
 
@@ -27,6 +33,7 @@ class SeafileSource:
         password: str,
         watch_paths: list[str],
         verify_ssl: bool = True,
+        concurrency: int = 4,
         timeout: float = 60,
         retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
     ) -> None:
@@ -40,26 +47,29 @@ class SeafileSource:
         self._lock = threading.Lock()
         self._token: str | None = None
         self._repo_ids: dict[str, str] = {}
+        self.walker = TreeWalker(self._level, max_concurrency=concurrency)
 
     def list_files(self) -> list[RemoteFile]:
         repo_ids = self._load_repo_ids()
-        files: dict[str, RemoteFile] = {}
         for library in dict.fromkeys(lib for lib, _ in self._watch):
-            folders = [folder for lib, folder in self._watch if lib == library]
-            repo_id = repo_ids.get(library)
-            if repo_id is None:
+            if library not in repo_ids:
                 raise SourceError(f"библиотека {library!r} не найдена в Seafile (есть: {sorted(repo_ids)})")
-            for folder in folders:
-                if folder != "/":
-                    # A missing folder must be an error, not "no files": check that it exists.
-                    self._get(f"/api2/repos/{repo_id}/dir/", {"p": folder})
-            # One recursive listing of the library, filtered to the watched folders.
-            listing = self._get(f"/api/v2.1/repos/{repo_id}/dir/", {"p": "/", "recursive": "1", "t": "f"})
-            for entry in listing["dirent_list"]:
-                inner = entry["parent_dir"].rstrip("/") + "/" + entry["name"]
-                if any(folder == "/" or inner.startswith(folder + "/") for folder in folders):
-                    files[f"/{library}{inner}"] = self._remote_file(library, repo_id, inner, entry["id"])
-        return list(files.values())
+        return self.walker.run([f"/{library}{folder}".rstrip("/") for library, folder in self._watch])
+
+    def _level(self, path: str) -> Level:
+        library, folder = _split(path)
+        repo_id = self._repo_id(library)
+        try:
+            entries = self._get(f"/api/v2.1/repos/{repo_id}/dir/", {"p": folder})["dirent_list"]
+            return Level(
+                folders=[Folder(_join(path, e["name"]), e["id"]) for e in entries if e["type"] == "dir"],
+                files=[
+                    self._remote_file(library, repo_id, _join(folder, e["name"]), e["id"])
+                    for e in entries if e["type"] != "dir"
+                ],
+            )
+        except (KeyError, TypeError) as e:
+            raise SourceError(f"некорректный ответ Seafile на список папки {path}") from e
 
     def stat(self, path: str) -> RemoteFile | None:
         library, inner = _split(path)
@@ -150,6 +160,10 @@ class SeafileSource:
                 except (ValueError, KeyError) as e:
                     raise SourceError("Seafile не вернул токен при входе") from e
             return self._token
+
+
+def _join(folder: str, name: str) -> str:
+    return folder.rstrip("/") + "/" + name
 
 
 def _split(path: str) -> tuple[str, str]:

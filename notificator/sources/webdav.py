@@ -3,28 +3,24 @@ Files on a WebDAV server (ownCloud Infinite Scale, or any other).
 
 Paths are relative to the base URL, e.g. "/notes/meeting.md".
 
-Listing asks for a whole subtree at once (PROPFIND Depth: infinity). When the
-server refuses that, or a subtree is too big to come back in one answer, the
-subtree is walked directory by directory instead. A directory that cannot be
-listed even on its own makes the whole listing fail: a partial listing would
-look like deleted files.
+Listing asks for one directory at a time (PROPFIND Depth: 1), never for a
+whole tree; see notificator.sources.batching. A directory that cannot be
+listed makes the whole listing fail: a partial listing would look like
+deleted files.
 """
 from __future__ import annotations
 
-import logging
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from urllib.parse import quote, unquote, urlparse
 
 import requests
 
 from notificator.core.model import RemoteFile
+from notificator.sources.batching import Folder, Level, TreeWalker
 from notificator.sources.http import DEFAULT_RETRY_DELAYS, send
 from notificator.sync.ports import SourceError
-
-logger = logging.getLogger(__name__)
 
 _DAV = "{DAV:}"
 _OC = "{http://owncloud.org/ns}"
@@ -36,16 +32,8 @@ _PROPFIND_BODY = (
 ).encode()
 
 
-class _InfinityNotSupported(Exception):
-    pass
-
-
 class _NotFound(SourceError):
     pass
-
-
-class _TooBigForOneRequest(Exception):
-    """A whole-tree request failed in a way that asking for less may fix: timeout, 5xx, cut-off answer."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,37 +52,43 @@ class WebDavSource:
         password: Callable[[], str],
         watch_paths: list[str] | None = None,
         verify_ssl: bool = True,
-        depth_infinity: bool = True,
-        concurrency: int = 8,
+        trust_folder_etags: bool = False,
+        concurrency: int = 4,
         timeout: float = 60,
         retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
     ) -> None:
-        """`password` is called for every request batch, so a rotating token can be supplied."""
+        """`password` is called for every listing, so a rotating token can be supplied.
+
+        `trust_folder_etags` is for servers where a directory's ETag changes
+        whenever anything under it changes (ownCloud, Nextcloud, Seafile): an
+        unchanged directory is then not listed again. On other servers it
+        would hide changes made deeper in the tree.
+        """
         self._base_url = url.rstrip("/")
         self._prefix = unquote(urlparse(self._base_url).path)
         self._username = username
         self._password = password
         self._watch_paths = [_normalize(p) for p in (watch_paths or ["/"])]
         self._verify_ssl = verify_ssl
-        # Set to False for servers that reject Depth: infinity without saying so clearly.
-        self._depth_infinity = depth_infinity
-        self._concurrency = concurrency
         self._timeout = timeout
         self._retry_delays = retry_delays
-        # Directories the server could not return whole; they are listed piece by piece.
-        self._split: set[str] = set()
+        self._trust_folder_etags = trust_folder_etags
+        self._auth = (username, "")
+        self.walker = TreeWalker(self._level, max_concurrency=concurrency)
 
     def list_files(self) -> list[RemoteFile]:
-        auth = (self._username, self._password())
-        files: dict[str, RemoteFile] = {}
-        with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
-            for root in self._watch_paths:
-                top = self._children(root, auth)
-                subtrees = pool.map(lambda d: self._subtree(d, auth), [e.path for e in top if e.is_dir])
-                for entry in (*top, *(e for subtree in subtrees for e in subtree)):
-                    if not entry.is_dir:
-                        files[entry.path] = RemoteFile(entry.path, entry.version, entry.link)
-        return list(files.values())
+        self._auth = (self._username, self._password())
+        return self.walker.run(self._watch_paths)
+
+    def _level(self, path: str) -> Level:
+        children = self._children(path, self._auth)
+        return Level(
+            folders=[
+                Folder(e.path, (e.version or None) if self._trust_folder_etags else None)
+                for e in children if e.is_dir
+            ],
+            files=[RemoteFile(e.path, e.version, e.link) for e in children if not e.is_dir],
+        )
 
     def stat(self, path: str) -> RemoteFile | None:
         auth = (self._username, self._password())
@@ -115,47 +109,15 @@ class WebDavSource:
             raise SourceError(f"не удалось скачать {file.path}: HTTP {response.status_code}")
         return response.content.decode("utf-8", errors="ignore")
 
-    def _subtree(self, path: str, auth: tuple[str, str]) -> list[_Entry]:
-        """Every entry under a directory: in one request when the server manages it, in pieces otherwise."""
-        if self._depth_infinity and path not in self._split:
-            try:
-                return self._propfind(path, "infinity", auth)
-            except _InfinityNotSupported:
-                self._depth_infinity = False
-            except _TooBigForOneRequest as e:
-                # Remembered, so later listings do not wait for the same timeout again.
-                self._split.add(path)
-                logger.info("Каталог %s не отдаётся одним запросом (%s), читаю его по частям", path, e)
-        entries: list[_Entry] = []
-        for child in self._children(path, auth):
-            if child.is_dir:
-                entries.extend(self._subtree(child.path, auth))
-            else:
-                entries.append(child)
-        return entries
-
     def _children(self, path: str, auth: tuple[str, str]) -> list[_Entry]:
         return [e for e in self._propfind(path, "1", auth) if e.path != path]
 
     def _propfind(self, path: str, depth: str, auth: tuple[str, str]) -> list[_Entry]:
-        whole_tree = depth == "infinity"
-        try:
-            # A whole-tree request that timed out will time out again: split instead of retrying.
-            response = self._send(
-                "PROPFIND", path, auth, retry=not whole_tree,
-                data=_PROPFIND_BODY, headers={"Depth": depth, "Content-Type": "application/xml; charset=utf-8"},
-            )
-        except SourceError as e:
-            if whole_tree:
-                raise _TooBigForOneRequest(str(e)) from e
-            raise
+        response = self._send(
+            "PROPFIND", path, auth,
+            data=_PROPFIND_BODY, headers={"Depth": depth, "Content-Type": "application/xml; charset=utf-8"},
+        )
         status = response.status_code
-        if whole_tree:
-            # RFC 4918: a server that refuses infinite depth answers 403 with <propfind-finite-depth/>.
-            if status in (400, 501) or (status == 403 and "propfind-finite-depth" in response.text.lower()):
-                raise _InfinityNotSupported()
-            if status >= 500:
-                raise _TooBigForOneRequest(f"HTTP {status}")
         if status in (401, 403):
             raise SourceError(f"ошибка авторизации WebDAV (HTTP {status}) для {path}")
         if status == 404:
@@ -165,8 +127,6 @@ class WebDavSource:
         try:
             root = ET.fromstring(response.content)
         except ET.ParseError as e:
-            if whole_tree:
-                raise _TooBigForOneRequest("ответ оборван") from e
             raise SourceError(f"некорректный ответ сервера для {path}: {e}") from e
         return [self._entry(r) for r in root.iter(f"{_DAV}response")]
 
@@ -178,7 +138,7 @@ class WebDavSource:
             raise SourceError(f"сервер не вернул свойства для {path}")
         resource_type = prop.find(f"{_DAV}resourcetype")
         if resource_type is not None and resource_type.find(f"{_DAV}collection") is not None:
-            return _Entry(path, is_dir=True)
+            return _Entry(path, is_dir=True, version=(prop.findtext(f"{_DAV}getetag") or "").strip('"'))
         version = (prop.findtext(f"{_DAV}getetag") or "").strip('"') or ":".join(
             filter(None, (prop.findtext(f"{_DAV}getlastmodified"), prop.findtext(f"{_DAV}getcontentlength")))
         )
@@ -186,11 +146,9 @@ class WebDavSource:
             raise SourceError(f"сервер не сообщает версию файла {path} (нет ETag и даты изменения)")
         return _Entry(path, is_dir=False, version=version, link=prop.findtext(f"{_OC}privatelink") or None)
 
-    def _send(
-        self, method: str, path: str, auth: tuple[str, str], retry: bool = True, **kwargs
-    ) -> requests.Response:
+    def _send(self, method: str, path: str, auth: tuple[str, str], **kwargs) -> requests.Response:
         return send(
-            method, self._base_url + quote(path, safe="/"), self._retry_delays if retry else (),
+            method, self._base_url + quote(path, safe="/"), self._retry_delays,
             auth=auth, verify=self._verify_ssl, timeout=self._timeout, **kwargs,
         )
 

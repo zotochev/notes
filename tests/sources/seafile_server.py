@@ -18,6 +18,8 @@ class FakeSeafile(ThreadingHTTPServer):
         self.extra_repos: list[dict] = []
         self.token = "token-1"
         self.broken: set[str] = set()
+        # (folder, recursive) of every v2.1 listing request, in order.
+        self.listings: list[tuple[str, bool]] = []
         self.parent_dir_trailing_slash = False
         self.logins = 0
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -91,7 +93,11 @@ class _Handler(BaseHTTPRequestHandler):
         elif parts[0] == "api2":
             self._json(200, [])
         else:
+            folder = path.rstrip("/") or "/"
+            recursive = query.get("recursive") == "1"
+            self.server.listings.append((folder, recursive))
             slash = "/" if self.server.parent_dir_trailing_slash else ""
+            base = folder.rstrip("/") + "/"
             entries = [
                 {
                     "type": "file",
@@ -100,8 +106,21 @@ class _Handler(BaseHTTPRequestHandler):
                     "id": sha1(text.encode("utf-8")).hexdigest(),
                 }
                 for p, text in files.items()
+                if p.startswith(base) and (recursive or "/" not in p[len(base):])
             ]
+            if not recursive:
+                entries += [
+                    {"type": "dir", "name": d.rsplit("/", 1)[1], "parent_dir": base, "id": self._dir_id(files, d)}
+                    for d in sorted(self.server.folders(library))
+                    if d != "/" and d.rsplit("/", 1)[0] + "/" == base
+                ]
             self._json(200, {"dirent_list": entries})
+
+    @staticmethod
+    def _dir_id(files: dict[str, str], folder: str) -> str:
+        """Like Seafile: a hash of everything under the folder."""
+        inside = sorted((p, text) for p, text in files.items() if p.startswith(folder + "/"))
+        return sha1(repr(inside).encode("utf-8")).hexdigest()
 
     def _json(self, status: int, payload) -> None:
         self._reply(status, json.dumps(payload).encode("utf-8"))

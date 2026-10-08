@@ -15,13 +15,12 @@ class FakeWebDav(ThreadingHTTPServer):
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.files: dict[str, str] = {}
-        self.allow_infinity = True
+        # True: a folder's ETag covers everything under it (ownCloud). False: only its direct children.
+        self.etags_cover_subtree = True
         self.private_links = False
         # Paths answering 500 forever, and paths answering 503 a given number of times.
         self.broken: set[str] = set()
         self.flaky: dict[str, int] = {}
-        # Directories whose whole tree is "too big": Depth: infinity on them answers 504.
-        self.too_big: set[str] = set()
         self.truncate_xml = False
         self.requests: list[tuple[str, str, str]] = []
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -49,12 +48,6 @@ class _Handler(BaseHTTPRequestHandler):
         if path is None:
             return
         depth = self.headers.get("Depth", "infinity")
-        if depth == "infinity" and path in self.server.too_big:
-            self._reply(504, "")
-            return
-        if depth == "infinity" and not self.server.allow_infinity:
-            self._reply(403, '<d:error xmlns:d="DAV:"><d:propfind-finite-depth/></d:error>')
-            return
         if path not in self.server.dirs() and path not in self.server.files:
             self._reply(404, "")
             return
@@ -99,7 +92,13 @@ class _Handler(BaseHTTPRequestHandler):
         is_dir = path in self.server.dirs()
         href = quote(PREFIX + path) + ("/" if is_dir and path != "/" else "")
         if is_dir:
-            props = "<d:resourcetype><d:collection/></d:resourcetype>"
+            base = path.rstrip("/") + "/"
+            covered = sorted(
+                (p, text) for p, text in self.server.files.items()
+                if p.startswith(base) and (self.server.etags_cover_subtree or "/" not in p[len(base):])
+            )
+            etag = md5(repr(covered).encode()).hexdigest()
+            props = f'<d:resourcetype><d:collection/></d:resourcetype><d:getetag>"{etag}"</d:getetag>'
         else:
             etag = md5(self.server.files[path].encode()).hexdigest()
             props = f'<d:resourcetype/><d:getetag>"{etag}"</d:getetag>'

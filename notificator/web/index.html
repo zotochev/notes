@@ -131,6 +131,19 @@
         </details>
     </section>
 
+    <section id="listing-section" class="hidden">
+        <details>
+            <summary>Чтение списка файлов <span id="listing-summary" class="muted" style="font-weight:400"></span></summary>
+            <p class="muted">Источник читается по одной папке за запрос. Папки, в которых с прошлого раза ничего
+                не изменилось, не перечитываются. Число одновременных запросов подстраивается под скорость ответа сервера.</p>
+            <div id="listing-current" class="mono muted"></div>
+            <div class="table-wrap"><table>
+                <thead><tr><th>Папка</th><th>Состояние</th><th>Папок прочитано</th><th>Без изменений</th><th>В очереди</th><th>Файлов</th></tr></thead>
+                <tbody id="listing"></tbody>
+            </table></div>
+        </details>
+    </section>
+
     <section>
         <h2>Google Calendar</h2>
         <div class="row">
@@ -390,12 +403,35 @@ async function openGoogleModal(path, uid) {
 
 function closeGoogleModal() { $('google-modal').classList.add('hidden'); }
 
+const LISTING_STATES = {
+    running: ['читается', 'parse'], queued: ['в очереди', 'deleted'],
+    done: ['прочитано', 'created'], unchanged: ['без изменений', 'deleted'],
+};
+
+function renderListing(l) {
+    $('listing-section').classList.toggle('hidden', !l);
+    if (!l) return;
+    const pace = l.pauseSec ? `сервер отвечает медленно: по одному запросу с паузой ${l.pauseSec} с`
+        : `одновременных запросов: ${l.concurrency} из ${l.maxConcurrency}`;
+    // One quiet line; the details are inside the collapsed section.
+    $('listing-summary').textContent = l.active
+        ? `— идёт: прочитано папок ${l.read}, в очереди ${l.waiting}`
+        : `— папок прочитано ${l.read}, без изменений ${l.unchanged}`;
+    $('listing-current').textContent = `Файлов найдено: ${l.files} · ${pace}`
+        + (l.current.length ? ' · сейчас читается: ' + l.current.join(', ') : '');
+    rows('listing', l.groups, g => `<tr>
+        <td class="mono">${esc(g.folder)}</td>
+        <td class="nowrap"><span class="tag ${LISTING_STATES[g.state][1]}">${LISTING_STATES[g.state][0]}</span></td>
+        <td>${g.read}</td><td>${g.unchanged}</td><td>${g.waiting || ''}</td><td>${g.files}</td></tr>`, 6, 'Пока пусто');
+}
+
 async function refreshData() {
-    const [events, issues, journal, cycles] = await Promise.all(
-        ['/api/events', '/api/issues', '/api/journal', '/api/cycles'].map(p => api(p)));
+    const [events, issues, journal, cycles, listing] = await Promise.all(
+        ['/api/events', '/api/issues', '/api/journal', '/api/cycles', '/api/listing'].map(p => api(p)));
     allEvents = events;
     allIssues = issues;
     renderFiles();
+    renderListing(listing);
     rows('journal', journal, j => `<tr>
         <td class="nowrap">${esc(when(j.at))}</td>
         <td><span class="tag ${esc(j.action)}">${esc(ACTIONS[j.action] || j.action)}</span></td>

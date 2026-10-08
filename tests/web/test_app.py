@@ -247,3 +247,20 @@ def test_syncing_an_untracked_file_explains_why_not(world):
     response = world.client.post("/api/files/sync", json={"path": "/nope.md"})
 
     assert response.json()["error"] == "файл не отслеживается"
+
+
+def test_listing_progress_is_empty_for_a_source_that_lists_in_one_go(world):
+    assert world.client.get("/api/listing").json() is None
+
+
+def test_listing_progress_shows_the_batches_of_a_source_that_walks_its_tree(world):
+    from notificator.sources.batching import Folder, Level, TreeWalker
+
+    levels = {"/": Level([Folder("/notes", "m1")], []), "/notes": Level([], [])}
+    world.source.walker = TreeWalker(levels.__getitem__)
+    world.source.walker.run(["/"])
+
+    listing = world.client.get("/api/listing").json()
+
+    assert (listing["active"], listing["read"], listing["concurrency"]) == (False, 2, 1)
+    assert [g["folder"] for g in listing["groups"]] == ["/", "/notes"]

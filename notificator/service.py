@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from notificator.calendars.google import GoogleCalendar
 from notificator.config import STATE_FILE, Config
@@ -77,6 +78,12 @@ class SyncService:
     @property
     def running(self) -> bool:
         return self._running.is_set()
+
+    @property
+    def listing(self) -> dict[str, Any] | None:
+        """How the source's file listing is going, batch by batch; None for a source that lists in one go."""
+        walker = getattr(self._source, "walker", None)
+        return walker.snapshot() if walker is not None else None
 
     @property
     def seconds_until_next_cycle(self) -> int | None:

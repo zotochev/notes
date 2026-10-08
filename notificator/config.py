@@ -33,7 +33,10 @@ class WebDavSourceConfig(_Strict):
     password: str
     watch_paths: list[str] = ["/"]
     verify_ssl: bool = True
-    # Turn off for servers that reject PROPFIND Depth: infinity without saying so clearly.
+    # Turn on for ownCloud, Nextcloud and Seafile, where a directory's ETag changes whenever anything
+    # under it changes: unchanged directories are then not listed again. Elsewhere it would hide changes.
+    trust_folder_etags: bool = False
+    # No longer used (a whole tree is never requested); accepted so that old configs still load.
     depth_infinity: bool = True
 
 

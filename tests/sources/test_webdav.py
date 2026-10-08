@@ -32,72 +32,56 @@ def paths(files: list[RemoteFile]) -> set[str]:
     return {f.path for f in files}
 
 
-@pytest.mark.parametrize("allow_infinity", [True, False])
-def test_lists_every_file_with_or_without_depth_infinity(server, allow_infinity):
-    server.allow_infinity = allow_infinity
-
+def test_lists_every_file(server):
     files = source(server).list_files()
 
     assert paths(files) == set(FILES)
     assert all(f.version for f in files)
 
 
-def test_server_refusing_depth_infinity_is_asked_only_once(server):
-    server.allow_infinity = False
-    src = source(server, concurrency=1)
+def test_listing_asks_one_directory_at_a_time_and_never_a_whole_tree(server):
+    source(server).list_files()
 
-    src.list_files()
-    src.list_files()
-
-    assert sum(depth == "infinity" for _, _, depth in server.requests) == 1
-
-
-def test_directory_too_big_for_one_request_is_listed_in_pieces(server):
-    server.too_big = {"/notes"}
-
-    files = source(server).list_files()
-
-    assert paths(files) == set(FILES)
-    # The parent is split, but its subdirectory is still fetched whole.
-    assert ("PROPFIND", "/notes/deep", "infinity") in server.requests
-
-
-def test_splitting_goes_as_deep_as_needed(server):
-    server.too_big = {"/notes", "/notes/deep", "/notes/deep/er"}
-
-    assert paths(source(server).list_files()) == set(FILES)
-
-
-def test_too_big_directory_is_not_asked_whole_again(server):
-    server.too_big = {"/notes"}
-    src = source(server)
-
-    src.list_files()
-    src.list_files()
-
-    assert server.requests.count(("PROPFIND", "/notes", "infinity")) == 1
-
-
-def test_whole_tree_timeout_is_not_retried_before_splitting(server):
-    server.too_big = {"/notes"}
-
-    WebDavSource(server.url, USER, lambda: PASSWORD, retry_delays=(0.0, 0.0, 0.0), timeout=5).list_files()
-
-    assert server.requests.count(("PROPFIND", "/notes", "infinity")) == 1
-
-
-def test_directory_that_fails_even_on_its_own_still_fails_the_listing(server):
-    server.too_big = {"/notes"}
-    server.broken = {"/notes/deep"}
-
-    with pytest.raises(SourceError, match="/notes/deep"):
-        source(server).list_files()
-
-
-def test_depth_infinity_can_be_disabled_up_front(server):
-    source(server, depth_infinity=False).list_files()
-
+    assert sorted(path for _, path, _ in server.requests) == [
+        "/", "/empty-sibling", "/notes", "/notes/deep", "/notes/deep/er", "/Мои заметки",
+    ]
     assert all(depth == "1" for _, _, depth in server.requests)
+
+
+def test_every_directory_is_listed_again_unless_folder_etags_are_trusted(server):
+    src = source(server)
+    src.list_files()
+    server.requests.clear()
+
+    src.list_files()
+
+    assert len(server.requests) == 6
+
+
+def test_unchanged_directories_are_not_listed_again_when_folder_etags_are_trusted(server):
+    src = source(server, trust_folder_etags=True)
+    before = src.list_files()
+    server.requests.clear()
+
+    after = src.list_files()
+
+    assert server.requests == [("PROPFIND", "/", "1")]
+    assert {f.path: f for f in after} == {f.path: f for f in before}
+
+
+def test_only_the_changed_branch_is_listed_again_when_folder_etags_are_trusted(server):
+    src = source(server, trust_folder_etags=True)
+    src.list_files()
+    server.files["/notes/deep/er/b.txt"] = "changed"
+    server.files["/notes/deep/new.md"] = "new"
+    del server.files["/empty-sibling/c.md"]
+    server.requests.clear()
+
+    files = {f.path: f for f in src.list_files()}
+
+    assert sorted(path for _, path, _ in server.requests) == ["/", "/notes", "/notes/deep", "/notes/deep/er"]
+    assert files == {f.path: f for f in source(server).list_files()}
+    assert "/notes/deep/new.md" in files and "/empty-sibling/c.md" not in files
 
 
 def test_watch_paths_limit_the_listing(server):
@@ -131,10 +115,8 @@ def test_reads_file_text(server):
     assert text == "план"
 
 
-@pytest.mark.parametrize("allow_infinity", [True, False])
-def test_one_failing_directory_fails_the_whole_listing(server, allow_infinity):
-    server.allow_infinity = allow_infinity
-    server.broken = {"/notes/deep" if not allow_infinity else "/notes"}
+def test_one_failing_directory_fails_the_whole_listing(server):
+    server.broken = {"/notes/deep"}
 
     with pytest.raises(SourceError):
         source(server).list_files()

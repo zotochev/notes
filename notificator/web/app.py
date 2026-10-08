@@ -139,6 +139,11 @@ def create_app(
         with store() as db:
             return db.cycles(30)
 
+    @app.get("/api/listing")
+    def listing() -> dict[str, Any] | None:
+        """Batches of the file listing that is running, or of the last one."""
+        return service.listing
+
     @app.post("/api/sync")
     def sync_now() -> dict[str, bool]:
         service.trigger()

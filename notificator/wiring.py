@@ -31,7 +31,7 @@ def build_source(cfg: SourceConfig) -> Source:
         case WebDavSourceConfig():
             return WebDavSource(
                 cfg.url, cfg.username, lambda: cfg.password,
-                watch_paths=cfg.watch_paths, verify_ssl=cfg.verify_ssl, depth_infinity=cfg.depth_infinity,
+                watch_paths=cfg.watch_paths, verify_ssl=cfg.verify_ssl, trust_folder_etags=cfg.trust_folder_etags,
             )
         case SeafileSourceConfig():
             return SeafileSource(cfg.url, cfg.username, cfg.password, cfg.watch_paths, verify_ssl=cfg.verify_ssl)
