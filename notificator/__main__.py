@@ -30,6 +30,9 @@ def main(argv: list[str] | None = None) -> int:
         help="замена начала пути файла, например /Notes=/mylib/Notes; можно указать несколько раз",
     )
     move.add_argument("--apply", action="store_true", help="выполнить перенос, а не только показать")
+    move.add_argument(
+        "--no-check", action="store_true", help="не читать новый источник, чтобы показать первый цикл после переноса"
+    )
     cleanup = commands.add_parser(
         "cleanup", help="найти в календарях события notificator, которых нет в текущем состоянии"
     )
@@ -47,7 +50,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "import-old-state":
             return _import_old_state(config, args.data_dir, args.state_file, args.source)
         if args.command == "move-source":
-            return _move_source(config, args.data_dir, args.old, args.new, args.path, args.apply)
+            return _move_source(
+                config, args.data_dir, args.old, args.new, args.path, args.apply, not args.no_check
+            )
     except ConfigError as e:
         print(f"Ошибка настроек: {e}", file=sys.stderr)
         return 2
@@ -91,7 +96,9 @@ def _import_old_state(config, data_dir: Path, state_file: Path, source_name: str
     return 0
 
 
-def _move_source(config, data_dir: Path, old: str, new: str, rules: list[str], apply: bool) -> int:
+def _move_source(
+    config, data_dir: Path, old: str, new: str, rules: list[str], apply: bool, check: bool = True
+) -> int:
     from notificator.config import STATE_FILE
     from notificator.migrate import move_source
     from notificator.store import Store
@@ -103,22 +110,67 @@ def _move_source(config, data_dir: Path, old: str, new: str, rules: list[str], a
         return 1
     prefixes = [tuple(rule.split("=", 1)) for rule in rules]
     with Store(data_dir / STATE_FILE) as store:
-        if apply:
-            backup = data_dir / f"{STATE_FILE}.before-move"
-            store.backup_to(backup)
-            print(f"Копия состояния до переноса: {backup}")
-        result = move_source(store, old, new, prefixes, apply)
-    print(f"{'Перенесено' if apply else 'Будет перенесено'} событий: {result.moved} ({old} -> {new}). "
+        result = move_source(store, old, new, prefixes, apply=False)
+    print(f"{'Переносится' if apply else 'Будет перенесено'} событий: {result.moved} ({old} -> {new}). "
           f"Не переносится: {len(result.skipped)}")
     for before, after in result.examples:
         print(f"  {before} -> {after}")
     for reason in result.skipped:
         print(f"  {reason}")
+    if check and not _first_cycle_after_move(config, data_dir, old, new, prefixes):
+        print("Источник не удалось проверить, перенос не выполнен. Без проверки: --no-check.", file=sys.stderr)
+        return 1
     if not apply:
         print("Ничего не изменено. Чтобы выполнить перенос, повторите команду с --apply.")
-    else:
-        print(f"Теперь сделайте {new!r} активным источником и выполните `plan`: ожидаются только «обновить».")
+        return 0
+    with Store(data_dir / STATE_FILE) as store:
+        backup = data_dir / f"{STATE_FILE}.before-move"
+        store.backup_to(backup)
+        move_source(store, old, new, prefixes, apply=True)
+    print(f"Перенос выполнен. Копия состояния до переноса: {backup}")
+    print(f"Теперь сделайте {new!r} активным источником и запустите сервис.")
     return 0
+
+
+def _first_cycle_after_move(config, data_dir: Path, old: str, new: str, prefixes: list[tuple[str, str]]) -> bool:
+    """Show what the first cycle of the new source would do after the move. False when it could not be worked out.
+
+    The files are read from the new source for real; the move and the cycle happen in a throwaway copy of the state.
+    """
+    from notificator.migrate import move_source
+
+    # Calendar event id -> what the event is, for the calls that carry no body.
+    known: dict[str, str] = {}
+
+    def move_in_copy(store) -> None:
+        move_source(store, old, new, prefixes, apply=True)
+        for source in store.event_counts():
+            for e in store.events(source):
+                known[e["gcal_event_id"]] = f"{e['summary']!r} uid={e['uid']} {source}:{e['path']}"
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S", stream=sys.stderr)
+    preview = preview_cycle(config, data_dir, new, before=move_in_copy)
+    if preview.report.error:
+        print(f"Проверка по источнику {new} не удалась: {preview.report.error}", file=sys.stderr)
+        return False
+    actions = [call.action for call in preview.calls]
+    kept = len(known) - actions.count("delete")
+    print(f"Проверка по источнику {new} (первый цикл после переноса): файлов {preview.report.listed}, "
+          f"не прочитано {preview.report.read_failed}.")
+    print(f"  события сохранятся: {kept} (из них обновить описание: {actions.count('update')})")
+    print(f"  будут удалены из календаря: {actions.count('delete')}")
+    print(f"  будут созданы заново: {actions.count('insert')}")
+    for call in preview.calls:
+        if call.action == "delete":
+            print(f"    удалить {known.get(call.event_id, call.event_id)}")
+        elif call.action == "insert":
+            where = (call.body.get("description") or "\n").splitlines()[1:2]
+            print(f"    создать {call.body['summary']!r} {' '.join(where)}")
+    if preview.deletes_need_approval:
+        print("  Удалений много: настоящий цикл отложит их до подтверждения в админке.")
+    if "delete" in actions and "insert" in actions:
+        print("  Есть и «удалить», и «создать»: возможно, правило --path даёт не те пути.")
+    return True
 
 
 def _cleanup(config, data_dir: Path, delete: bool) -> int:

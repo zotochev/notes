@@ -94,3 +94,67 @@ def test_longest_matching_prefix_is_replaced_at_a_folder_boundary(path, expected
 
 def test_root_prefix_matches_every_path():
     assert moved_path("/a/b.md", [("/", "/mylib")]) == "/mylib/a/b.md"
+
+
+CONFIG_JSON = (
+    '{"active_source": "owncloud", "sources": {'
+    '"owncloud": {"type": "local", "roots": ["."]}, "seafile": {"type": "local", "roots": ["."]}}}'
+)
+
+
+def run_command(tmp_path, monkeypatch, capsys, new_source: FakeSource, *args: str) -> tuple[int, str]:
+    from notificator.__main__ import main
+
+    (tmp_path / "config.json").write_text(CONFIG_JSON, encoding="utf-8")
+    monkeypatch.setattr("notificator.preview.build_source", lambda cfg: new_source)
+    code = main(["--data-dir", str(tmp_path), "move-source", "owncloud", "seafile", *args])
+    captured = capsys.readouterr()
+    return code, captured.out + captured.err
+
+
+def test_command_shows_the_first_cycle_on_the_new_source_before_moving(world, tmp_path, monkeypatch, capsys):
+    world.old.files["/Notes/a.md"] = event("u1", "Meeting") + event("u2", "Lost on the way")
+    world.old.files["/Notes/b.md"] = event("u1", "File not copied")
+    world.sync("owncloud", world.old)
+    world.new.files["/mylib/Notes/a.md"] = event("u1", "Meeting")
+    world.new.files["/mylib/Notes/c.md"] = event("u1", "Only in the new source")
+
+    code, out = run_command(tmp_path, monkeypatch, capsys, world.new, "--path", "/Notes=/mylib/Notes")
+
+    assert code == 0
+    assert "события сохранятся: 1 (из них обновить описание: 1)" in out
+    assert "будут удалены из календаря: 2" in out
+    assert "удалить 'Lost on the way' uid=u2 seafile:/mylib/Notes/a.md" in out
+    assert "удалить 'File not copied' uid=u1 seafile:/mylib/Notes/b.md" in out
+    assert "создать 'Only in the new source' file: /mylib/Notes/c.md" in out
+    assert "Ничего не изменено" in out
+    assert world.store.event_counts() == {"owncloud": 3}
+
+
+def test_command_moves_with_apply_and_keeps_a_copy_of_the_state(world, tmp_path, monkeypatch, capsys):
+    world.old.files["/Notes/a.md"] = event("u1", "Meeting")
+    world.sync("owncloud", world.old)
+    world.new.files["/mylib/Notes/a.md"] = event("u1", "Meeting")
+
+    code, out = run_command(tmp_path, monkeypatch, capsys, world.new, "--path", "/Notes=/mylib/Notes", "--apply")
+
+    assert code == 0
+    assert "будут удалены из календаря: 0" in out and "будут созданы заново: 0" in out
+    assert world.store.event_counts() == {"seafile": 1}
+    with Store(tmp_path / "state.db.before-move") as backup:
+        assert backup.event_counts() == {"owncloud": 1}
+
+
+def test_command_does_not_move_when_the_new_source_cannot_be_checked(world, tmp_path, monkeypatch, capsys):
+    world.old.files["/Notes/a.md"] = event("u1", "Meeting")
+    world.sync("owncloud", world.old)
+    world.new.fail_listing = True
+
+    code, out = run_command(tmp_path, monkeypatch, capsys, world.new, "--path", "/Notes=/mylib/Notes", "--apply")
+    unchecked, _ = run_command(
+        tmp_path, monkeypatch, capsys, world.new, "--path", "/Notes=/mylib/Notes", "--apply", "--no-check",
+    )
+
+    assert (code, unchecked) == (1, 0)
+    assert "перенос не выполнен" in out
+    assert world.store.event_counts() == {"seafile": 1}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,8 +24,16 @@ class Preview:
     deletes_need_approval: bool
 
 
-def preview_cycle(config: Config, data_dir: Path, source_name: str | None = None) -> Preview:
-    """Run a cycle for one source against a throwaway copy of the state."""
+def preview_cycle(
+    config: Config,
+    data_dir: Path,
+    source_name: str | None = None,
+    before: Callable[[Store], None] = lambda store: None,
+) -> Preview:
+    """Run a cycle for one source against a throwaway copy of the state.
+
+    `before` may change the copy first, to preview a cycle that follows some other change.
+    """
     name = source_name or config.active_source
     source = build_source(config.sources[name])
 
@@ -36,6 +45,7 @@ def preview_cycle(config: Config, data_dir: Path, source_name: str | None = None
                 real.backup_to(copy)
         calendar = DryRunCalendar()
         with Store(copy) as store:
+            before(store)
             tracked_before = sum(store.event_counts().values())
             # Deletions are allowed so that they are listed; whether the real
             # cycle would hold them is worked out below, without a second pass.
