@@ -219,3 +219,77 @@ def test_csv_without_required_columns_is_ignored(text):
     assert result.events == ()
     assert result.issues == ()
     assert not result.opaque_failure
+
+
+@pytest.mark.parametrize("delimiter", [",", ";", "\t", "|", ":", "~", "\x1f", "§"])
+def test_csv_delimiter_is_found_from_the_header(delimiter):
+    rows = [
+        ["Location", "UID", " Summary ", "start", "attendees"],
+        ["Room, 2nd floor; left" if delimiter == "\t" else "Room", "a1", "Meeting", "2025-11-11", ""],
+    ]
+    text = "﻿" + "\r\n".join(delimiter.join(row) for row in rows) + "\r\n"
+
+    result = parse_csv(text, CTX)
+
+    assert result.issues == ()
+    (event,) = result.events
+    assert (event.uid, event.summary, event.start.date()) == ("a1", "Meeting", datetime(2025, 11, 11).date())
+    assert event.location.startswith("Room")
+
+
+def test_csv_with_semicolons_takes_quoted_attendees_and_commas_inside_fields():
+    text = (
+        'uid;summary;start;attendees\n'
+        'a1;Meeting, weekly;2025-11-11 08:00;"user@example.com; friend@example.com"\n'
+        'a2;Other;2025-11-12;user@example.com, friend@example.com\n'
+    )
+
+    result = parse_csv(text, CTX)
+
+    assert result.issues == ()
+    assert [e.summary for e in result.events] == ["Meeting, weekly", "Other"]
+    assert [e.attendees for e in result.events] == [("user@example.com", "friend@example.com")] * 2
+
+
+def test_csv_whose_columns_are_named_only_inside_another_column_is_ignored():
+    assert parse_csv("uid summary start\na1 Meeting 2025-11-11\n", CTX).events == ()
+    assert parse_csv("title;text\nx;uid,summary,start\n", CTX).events == ()
+
+
+def test_csv_header_names_may_be_quoted():
+    text = '﻿"uid";"summary";"start"\r\n"a1";"Meeting; weekly";"2025-11-11 08:00"\r\n'
+
+    result = parse_csv(text, CTX)
+
+    assert result.issues == ()
+    assert [(e.uid, e.summary) for e in result.events] == [("a1", "Meeting; weekly")]
+
+
+def test_csv_value_split_by_an_unquoted_delimiter_is_reported_not_guessed():
+    text = 'uid:summary:start\na1:Broken:2025-11-11 08:00\na2:Fine:"2025-11-11 08:00"\n'
+
+    result = parse_csv(text, CTX)
+
+    assert [e.uid for e in result.events] == ["a2"]
+    (issue,) = result.issues
+    assert issue.message.startswith("строка 2: значений больше, чем колонок")
+    # The row's uid cannot be trusted either, so nothing about absent uids is concluded from this file.
+    assert not result.confirms_absent("a1") and not result.confirms_absent("gone")
+
+
+def test_csv_trailing_empty_values_are_not_an_error():
+    result = parse_csv("uid,summary,start\na1,Meeting,2025-11-11,,\n", CTX)
+
+    assert (len(result.events), result.issues) == (1, ())
+
+
+def test_csv_with_a_header_and_no_rows_has_no_events_and_no_issues():
+    result = parse_csv("uid|summary|start\n", CTX)
+
+    assert (result.events, result.issues) == ((), ())
+    assert result.confirms_absent("a1")
+
+
+def test_csv_that_does_not_start_with_the_header_is_ignored():
+    assert parse_csv("\nuid,summary,start\na1,Meeting,2025-11-11\n", CTX).events == ()
+    assert parse_csv("sep=;\nuid;summary;start\na1;Meeting;2025-11-11\n", CTX).events == ()

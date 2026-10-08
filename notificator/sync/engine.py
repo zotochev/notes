@@ -35,7 +35,7 @@ _PROGRESS_INTERVAL_SEC = 5
 class SyncSettings:
     default_calendar: str
     default_tz: ZoneInfo
-    extensions: frozenset[str] = frozenset({".md", ".txt", ".csv"})
+    extensions: frozenset[str] = frozenset({".md", ".txt", ".csv", ".tsv"})
     # Deletions wait for approval when a cycle wants to delete at least
     # `held_deletes_min` events and more than this share of everything tracked.
     max_delete_ratio: float = 0.2

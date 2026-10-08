@@ -36,6 +36,9 @@ _SCALAR_FIELDS = (
     "time_zone", "location", "recurrence", "calendar_id",
 )
 _CSV_REQUIRED = ("uid", "summary", "start")
+_CSV_DELIMITERS = (",", ";", "\t", "|")
+# A space is left out on purpose: titles and dates contain spaces.
+_CSV_NEVER_DELIMITERS = '_" '
 # Any fixed instant works: it is only used to tell "date without a time of
 # day" apart from "date with a time of day" (see _parse_datetime).
 _ANCHOR = datetime(2000, 1, 1)
@@ -107,23 +110,35 @@ def parse_text(
 
 
 def parse_csv(text: str, ctx: ParseContext) -> ParseResult:
-    """Parse CSV with a header row; `attendees` are separated by `;`. Rows without uid are skipped.
+    """Parse CSV with a header row; `attendees` are separated by `;` or `,`. Rows without uid are skipped.
 
-    A CSV without the required columns is not an events table: it is ignored, like a file with no events.
+    The delimiter is the character that makes the first line contain the
+    required columns: usually a comma, semicolon or tab, but any other will
+    do. A CSV where none does is not an events table: it is ignored, like a
+    file with no events.
     """
     collector = _Collector()
-    reader = csv.DictReader(io.StringIO(text.lstrip("﻿")))
-    columns = {name.strip().lower() for name in reader.fieldnames or [] if name}
-    if any(c not in columns for c in _CSV_REQUIRED):
+    text = text.lstrip("﻿")
+    delimiter = _csv_delimiter(text)
+    if delimiter is None:
         return collector.result()
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
 
     for row_num, row in enumerate(reader, start=2):
+        if any(extra.strip() for extra in row.get(None) or []):
+            # A delimiter inside an unquoted value: the values no longer line up
+            # with the columns, so not even the uid of this row can be trusted.
+            collector.fail(
+                f"строка {row_num}: значений больше, чем колонок; значение с разделителем нужно взять в кавычки",
+                None, None,
+            )
+            continue
         values = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
         uid = values.get("uid", "")
         if not uid:
             continue
         fields: dict[str, FieldValue] = {k: values[k] for k in _SCALAR_FIELDS if values.get(k)}
-        fields["attendees"] = _split_list(values.get("attendees", ""))
+        fields["attendees"] = _split_list(values.get("attendees", "").replace(",", ";"))
         try:
             event = build_event(fields, ctx)
         except EventError as e:
@@ -133,8 +148,26 @@ def parse_csv(text: str, ctx: ParseContext) -> ParseResult:
     return collector.result()
 
 
+def _csv_delimiter(text: str) -> str | None:
+    """The delimiter with which the header line has every required column, or None when there is none.
+
+    Any single character of the header may be the delimiter, except those a
+    column name or a quoted field is made of. The usual ones are tried first.
+    """
+    header = text.split("\n", 1)[0].rstrip("\r")
+    unusual = sorted({c for c in header if not (c.isalnum() or c in _CSV_NEVER_DELIMITERS)})
+    for delimiter in dict.fromkeys((*_CSV_DELIMITERS, *unusual)):
+        try:
+            names = next(csv.reader([header], delimiter=delimiter), [])
+        except csv.Error:
+            continue
+        if set(_CSV_REQUIRED) <= {name.strip().lower() for name in names}:
+            return delimiter
+    return None
+
+
 # File types with their own format; every other watched file is scanned for <event> blocks.
-_PARSERS_BY_SUFFIX = {".csv": parse_csv}
+_PARSERS_BY_SUFFIX = {".csv": parse_csv, ".tsv": parse_csv}
 
 
 def build_event(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpec:

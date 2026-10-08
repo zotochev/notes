@@ -158,6 +158,14 @@ def test_unwatched_extensions_are_ignored(world):
     assert world.source.reads == []
 
 
+def test_tsv_file_is_parsed_as_a_table_too(world):
+    world.source.files["/plan.tsv"] = "uid\tsummary\tstart\nu1\tFrom TSV\t2030-01-01 10:00\n"
+
+    world.sync()
+
+    assert world.calendar.summaries() == ["From TSV"]
+
+
 def test_csv_file_is_parsed_by_its_type(world):
     world.source.files["/plan.csv"] = "uid,summary,start\nu1,From CSV,2030-01-01 10:00\n"
 

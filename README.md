@@ -16,9 +16,10 @@
 
 Необязательные поля: `description`, `time_zone`, `location`, `recurrence`, `calendar_id`,
 `attendees` (вложенные теги с email). Строки, начинающиеся с `#`, игнорируются.
-В файлах `.csv` события задаются строками таблицы с колонками `uid`, `summary`, `start` и теми же
-необязательными; участники в `attendees` разделяются `;`. CSV без колонок `uid`, `summary`, `start`
-игнорируется.
+В файлах `.csv` и `.tsv` события задаются строками таблицы с колонками `uid`, `summary`, `start` и теми же
+необязательными. Разделитель колонок определяется по первой строке: обычно это запятая, точка с
+запятой или табуляция, но подойдёт любой одиночный символ, кроме пробела. Участники в `attendees` разделяются `;` или `,` (если это и разделитель колонок —
+поле берётся в кавычки). CSV без колонок `uid`, `summary`, `start` игнорируется.
 
 ## Требования
 
@@ -69,7 +70,7 @@ mkdir data
   },
   "default_calendar": "me@gmail.com",
   "time_zone": "Europe/Ulyanovsk",
-  "extensions": [".md", ".txt", ".csv"],
+  "extensions": [".md", ".txt", ".csv", ".tsv"],
   "google": {"redirect_uri": "https://notificator.example.com/google/oauth/callback"}
 }
 ```

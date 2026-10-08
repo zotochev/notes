@@ -73,7 +73,7 @@ class Config(_Strict):
     sources: dict[str, SourceConfig]
     default_calendar: str = "primary"
     time_zone: str = "Europe/Ulyanovsk"
-    extensions: list[str] = [".csv", ".md", ".txt"]
+    extensions: list[str] = [".csv", ".md", ".tsv", ".txt"]
     scan_interval_sec: int = Field(default=600, ge=5)
     # How many files are downloaded at the same time.
     read_concurrency: int = Field(default=8, ge=1, le=32)
