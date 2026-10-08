@@ -158,13 +158,7 @@ class SyncEngine:
             self._say(f"изменений для календаря: {self._to_apply}, записываю…")
 
         for path, actions in plans.items():
-            complete = self._apply(path, actions, tracked.get(path, {}), report, hold_deletes)
-            if complete:
-                self._store.set_file_version(self._source_id, path, listing[path].version)
-            else:
-                # Not done: forget the version so the file is read again every
-                # cycle, even if it is put back exactly as it was.
-                self._store.clear_file_version(self._source_id, path)
+            self._apply_file(listing[path], actions, tracked.get(path, {}), report, hold_deletes)
         for path, deletes in vanished.items():
             if self._apply(path, deletes, tracked[path], report, hold_deletes):
                 self._store.forget_file(self._source_id, path)
@@ -176,6 +170,75 @@ class SyncEngine:
             if self._apply(path, deletes, events, report, hold_deletes, source):
                 self._store.forget_file(source, path)
         self._store.forget_other_sources_without_events(self._source_id)
+
+    def sync_file(self, path: str) -> CycleReport:
+        """Read one file and apply it now, without listing the source.
+
+        Only a file the store already knows is accepted. Nothing is concluded
+        from the file being missing: its events are left for a full cycle.
+        """
+        report = CycleReport()
+        try:
+            self._run_file(path, report)
+        except CalendarUnavailable as e:
+            report.error = f"календарь недоступен: {e}"
+        if report.error:
+            logger.warning("Sync of %s in %s stopped: %s", path, self._source_id, report.error)
+        return report
+
+    def _run_file(self, path: str, report: CycleReport) -> None:
+        tracked = self._store.tracked(self._source_id)
+        issues = self._store.issues(self._source_id)
+        known = tracked.keys() | self._store.file_versions(self._source_id).keys() | {i.path for i in issues}
+        if path not in known or not self._is_watched(path):
+            report.error = "файл не отслеживается"
+            return
+        self._known_errors = {(i.path, i.uid, i.message) for i in issues if i.kind == "sync"}
+        self._say(f"синхронизирую файл {path}…")
+        try:
+            file = self._source.stat(path)
+            text = self._source.read_text(file)
+        except SourceError as e:
+            report.read_failed = 1
+            self._store.set_issues(self._source_id, path, "source", [(None, str(e))])
+            self._store.clear_file_version(self._source_id, path)
+            report.error = f"файл не прочитан: {e}"
+            return
+        report.read = 1
+        self._store.set_issues(self._source_id, path, "source", [])
+
+        ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
+        parsed = parse_file(path, text, ctx)
+        self._store.set_issues(self._source_id, path, "parse", [(i.uid, i.message) for i in parsed.issues])
+        in_file = tracked.get(path, {})
+        actions = plan_file(self._source_id, file, parsed, in_file, self._settings.default_calendar)
+        delete_count = sum(isinstance(a, Delete) for a in actions)
+        hold_deletes = too_many_deletes(
+            delete_count, sum(len(events) for events in tracked.values()),
+            self._settings.max_delete_ratio, self._settings.held_deletes_min,
+        )
+        if hold_deletes:
+            report.held_deletes = delete_count
+        self._applied = 0
+        self._to_apply = len(actions) - report.held_deletes
+        self._last_progress = time.monotonic()
+        self._apply_file(file, actions, in_file, report, hold_deletes)
+
+    def _apply_file(
+        self,
+        file: RemoteFile,
+        actions: list[Action],
+        tracked: dict[str, TrackedEvent],
+        report: CycleReport,
+        hold_deletes: bool,
+    ) -> None:
+        """Apply the actions of a file that was read, and remember its version once nothing is left to do."""
+        if self._apply(file.path, actions, tracked, report, hold_deletes):
+            self._store.set_file_version(self._source_id, file.path, file.version)
+        else:
+            # Not done: forget the version so the file is read again every
+            # cycle, even if it is put back exactly as it was.
+            self._store.clear_file_version(self._source_id, file.path)
 
     def _is_watched(self, path: str) -> bool:
         return PurePosixPath(path).suffix.lower() in self._settings.extensions

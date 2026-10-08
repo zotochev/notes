@@ -229,3 +229,21 @@ def test_unknown_oauth_state_is_rejected(world):
     response = world.client.get("/google/oauth/callback?state=forged&code=x", follow_redirects=False)
 
     assert response.status_code == 400
+
+
+def test_one_file_can_be_synced_on_request(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.service.run_cycle()
+    world.source.files["/a.md"] = event("u1", "Renamed")
+
+    response = world.client.post("/api/files/sync", json={"path": "/a.md"})
+
+    assert (response.status_code, response.json()["pushed"], response.json()["error"]) == (200, 1, None)
+    assert world.client.get("/api/events").json()[0]["summary"] == "Renamed"
+    assert world.status()["fileSyncs"] == 1
+
+
+def test_syncing_an_untracked_file_explains_why_not(world):
+    response = world.client.post("/api/files/sync", json={"path": "/nope.md"})
+
+    assert response.json()["error"] == "файл не отслеживается"

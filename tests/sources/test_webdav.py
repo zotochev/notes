@@ -175,3 +175,17 @@ def test_unreachable_server_is_an_error(server):
 
     with pytest.raises(SourceError):
         src.list_files()
+
+
+def test_stat_reports_a_file_as_the_listing_does(server):
+    server.private_links = True
+    src = source(server)
+    listed = {f.path: f for f in src.list_files()}
+
+    assert src.stat("/Мои заметки/план на год.md") == listed["/Мои заметки/план на год.md"]
+
+
+@pytest.mark.parametrize("path", ["/gone.md", "/notes"])
+def test_stat_of_a_missing_file_or_a_directory_is_an_error(server, path):
+    with pytest.raises(SourceError):
+        source(server).stat(path)

@@ -71,11 +71,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._repo_call(parts, query)
 
     def _repo_call(self, parts: list[str], query: dict[str, str]) -> None:
-        library = parts[-2].removeprefix("id-")
+        repo = parts.index("repos") + 1
+        library = parts[repo].removeprefix("id-")
         files = self.server.libraries[library]
-        kind = parts[-1]
+        kind = "/".join(parts[repo + 1:])
         path = query.get("p", "/")
-        if kind == "file":
+        if kind == "file/detail":
+            if path in files:
+                self._json(200, {"type": "file", "id": sha1(files[path].encode("utf-8")).hexdigest()})
+            else:
+                self._json(404, {"error_msg": "File not found"})
+        elif kind == "file":
             if path in files:
                 self._json(200, f"{self.server.url}/seafhttp/files/{library}{quote(path)}")
             else:

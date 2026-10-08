@@ -525,3 +525,74 @@ def test_state_survives_restart(world, tmp_path):
 
     assert world.calendar.calls == ["update"]
     assert world.calendar.summaries() == ["Renamed"]
+
+
+def test_one_file_is_synced_without_listing_the_source(world):
+    world.source.files["/a.md"] = event("u1", "Meeting") + event("u2", "Gone")
+    world.source.files["/b.md"] = event("u1", "Other")
+    world.sync()
+    world.source.files["/a.md"] = event("u1", "Renamed")
+    world.source.files["/b.md"] = event("u1", "Not asked for")
+    world.source.fail_listing = True
+    world.source.reads.clear()
+
+    report = world.engine.sync_file("/a.md")
+
+    assert (report.read, report.pushed, report.deleted, report.error) == (1, 1, 1, None)
+    assert world.calendar.summaries() == ["Other", "Renamed"]
+    assert world.source.reads == ["/a.md"]
+
+
+def test_file_synced_on_its_own_is_not_read_again_by_the_next_cycle(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.sync()
+    world.source.files["/a.md"] = event("u1", "Renamed")
+    world.engine.sync_file("/a.md")
+    world.source.reads.clear()
+
+    world.sync()
+
+    assert world.source.reads == []
+
+
+def test_syncing_a_file_clears_its_fixed_issue(world):
+    world.source.files["/a.md"] = event("u1", "Meeting", start="не дата")
+    world.sync()
+    world.source.files["/a.md"] = event("u1", "Meeting")
+
+    report = world.engine.sync_file("/a.md")
+
+    assert report.pushed == 1
+    assert world.store.issues() == []
+
+
+def test_syncing_a_missing_file_keeps_its_events(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.sync()
+    del world.source.files["/a.md"]
+
+    report = world.engine.sync_file("/a.md")
+
+    assert "файл не прочитан" in report.error
+    assert world.calendar.summaries() == ["Meeting"]
+    assert [i.kind for i in world.store.issues()] == ["source"]
+
+
+def test_unknown_file_is_not_synced_on_request(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+
+    report = world.engine.sync_file("/a.md")
+
+    assert report.error == "файл не отслеживается"
+    assert world.calendar.summaries() == []
+
+
+def test_mass_deletion_in_one_file_is_held_too(world):
+    world.source.files["/a.md"] = "".join(event(f"u{i}", f"Event {i}") for i in range(10))
+    world.sync()
+    world.source.files["/a.md"] = "nothing here"
+
+    report = world.engine.sync_file("/a.md")
+
+    assert (report.held_deletes, report.deleted) == (10, 0)
+    assert len(world.calendar.summaries()) == 10

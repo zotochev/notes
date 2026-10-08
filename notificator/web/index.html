@@ -46,6 +46,9 @@
     th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 10px 6px 0; white-space: nowrap; }
     td { padding: 6px 10px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
     td.nowrap { white-space: nowrap; }
+    tr.file td { background: var(--bg); padding: 6px 10px; }
+    button.sync-file { padding: 2px 8px; font-size: 12px; }
+    .bad { color: var(--bad); }
     .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
     .tag.parse, .tag.held { background: var(--warn-bg); color: var(--warn); }
     .tag.sync, .tag.source, .tag.error { background: var(--bad-bg); color: var(--bad); }
@@ -92,7 +95,7 @@
             </div>
         </div>
         <div class="table-wrap"><table>
-            <thead><tr><th>Что случилось</th><th>Файл</th><th>UID</th><th>Подробности</th></tr></thead>
+            <thead><tr><th>Что случилось</th><th>UID</th><th>Подробности</th></tr></thead>
             <tbody id="issues"></tbody>
         </table></div>
     </section>
@@ -103,7 +106,7 @@
             <input id="filter" type="search" placeholder="Поиск по названию, файлу, UID">
         </div>
         <div class="table-wrap"><table>
-            <thead><tr><th></th><th>Название</th><th>Начало</th><th>Конец</th><th>Файл</th><th>UID</th><th>Календарь</th></tr></thead>
+            <thead><tr><th></th><th>Название</th><th>Начало</th><th>Конец</th><th>UID</th><th>Календарь</th></tr></thead>
             <tbody id="events"></tbody>
         </table></div>
     </section>
@@ -169,8 +172,14 @@ const ACTIONS = {created: 'создано', updated: 'обновлено', delet
 
 let lastCycleId = null;
 let activeSource = null;
+let lastFileSyncs = null;
 let allEvents = [];
+let allIssues = [];
 let calendarNames = {};
+// True while anything is being synchronised: per-file buttons are disabled.
+let busy = false;
+// path -> {text, bad}: what the last sync of a file ended with, shown next to its button for a while.
+const fileResults = {};
 
 async function api(path, options) {
     const response = await fetch(path, options);
@@ -190,6 +199,27 @@ function rows(target, items, render, colspan, empty) {
     $(target).innerHTML = items.length
         ? items.map(render).join('')
         : `<tr><td colspan="${colspan}" class="muted">${empty}</td></tr>`;
+}
+
+function groupBy(items, key) {
+    const groups = new Map();
+    for (const item of items) {
+        const k = key(item);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(item);
+    }
+    return [...groups.values()];
+}
+
+// Header row of a file's group: its path and, for files of the active source, the button that syncs it now.
+function fileRow(path, colspan, label, canSync = true) {
+    const result = fileResults[path];
+    return `<tr class="file"><td colspan="${colspan}"><div class="row">
+        <span class="mono">${label}</span>
+        ${canSync ? `<button class="sync-file" data-path="${esc(path)}" ${busy ? 'disabled' : ''}
+            title="Скачать файл из источника, разобрать и записать изменения в календарь">Синхронизировать</button>` : ''}
+        ${canSync && result ? `<span class="${result.bad ? 'bad' : 'muted'}">${esc(result.text)}</span>` : ''}
+    </div></td></tr>`;
 }
 
 function renderStatus(s) {
@@ -234,26 +264,66 @@ function renderStatus(s) {
     $('google-logout').disabled = !s.googleSignedIn;
 }
 
-function renderIssues(issues) {
-    $('attention').classList.toggle('hidden', !issues.length);
-    rows('issues', issues, i => `<tr>
-        <td class="nowrap"><span class="tag ${esc(i.kind)}">${esc(ISSUE_KINDS[i.kind] || i.kind)}</span></td>
-        <td class="mono">${i.source === activeSource ? '' : esc(i.source) + ': '}${esc(i.path)}</td>
-        <td class="mono">${esc(i.uid)}</td><td>${esc(i.message)}</td></tr>`, 4, '');
+function renderIssues() {
+    $('attention').classList.toggle('hidden', !allIssues.length);
+    // Files of the active source first, then by path.
+    const files = groupBy(allIssues, i => i.source + '\n' + i.path).sort(([a], [b]) =>
+        (a.source !== activeSource) - (b.source !== activeSource)
+        || a.source.localeCompare(b.source) || a.path.localeCompare(b.path));
+    rows('issues', files, issues => {
+        const {source, path} = issues[0];
+        const active = source === activeSource;
+        return fileRow(path, 3, (active ? '' : esc(source) + ': ') + esc(path), active)
+            + issues.map(i => `<tr>
+                <td class="nowrap"><span class="tag ${esc(i.kind)}">${esc(ISSUE_KINDS[i.kind] || i.kind)}</span></td>
+                <td class="mono">${esc(i.uid)}</td><td>${esc(i.message)}</td></tr>`).join('');
+    }, 3, '');
 }
 
 function renderEvents() {
     const query = $('filter').value.trim().toLowerCase();
     const shown = allEvents.filter(e => !query || [e.summary, e.path, e.uid, e.location].join('\n').toLowerCase().includes(query));
     $('events-count').textContent = query ? `${shown.length} из ${allEvents.length}` : allEvents.length;
-    rows('events', shown, e => `<tr>
+    const files = groupBy(shown, e => e.path).sort(([a], [b]) => a.path.localeCompare(b.path));
+    rows('events', files, events => fileRow(events[0].path, 6,
+            `${esc(events[0].path)} <span class="muted">· ${events.length}</span>`)
+        + events.map(e => `<tr>
         <td><span class="dot ${e.synced ? '' : 'pending'}" title="${e.synced ? 'Есть в календаре' : 'Ещё не записано в календарь'}"></span></td>
         <td><button class="link" data-path="${esc(e.path)}" data-uid="${esc(e.uid)}" title="Показать событие в Google Calendar">${esc(e.summary)}</button>${e.recurrence ? ` <span class="muted mono">${esc(e.recurrence)}</span>` : ''}
             ${e.location ? `<div class="muted">${esc(e.location)}</div>` : ''}</td>
         <td class="nowrap">${esc(when(e.start, e.time_zone))}</td>
         <td class="nowrap">${esc(when(e.end, e.time_zone))} <span class="muted">${esc(e.time_zone)}</span></td>
-        <td class="mono">${esc(e.path)}</td><td class="mono">${esc(e.uid)}</td>
-        <td>${esc(calendarNames[e.calendar_id] || e.calendar_id)}</td></tr>`, 7, 'Событий нет');
+        <td class="mono">${esc(e.uid)}</td>
+        <td>${esc(calendarNames[e.calendar_id] || e.calendar_id)}</td></tr>`).join(''), 6, 'Событий нет');
+}
+
+function fileResult(report) {
+    if (report.error) return {text: report.error, bad: true};
+    const parts = [];
+    if (report.pushed) parts.push(`записано в календарь: ${report.pushed}`);
+    if (report.deleted) parts.push(`удалено: ${report.deleted}`);
+    if (report.failed) parts.push(`ошибок: ${report.failed}`);
+    if (report.held_deletes) parts.push(`удаление ждёт подтверждения: ${report.held_deletes}`);
+    return {text: parts.join(', ') || 'изменений нет', bad: report.failed > 0};
+}
+
+function renderFiles() { renderEvents(); renderIssues(); }
+
+async function syncFile(path) {
+    busy = true;
+    fileResults[path] = {text: 'синхронизация…'};
+    renderFiles();
+    let result;
+    try {
+        result = fileResult(await api('/api/files/sync', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path}),
+        }));
+    } catch (e) { result = {text: e.message, bad: true}; }
+    fileResults[path] = result;
+    busy = false;
+    await refreshStatus();
+    renderFiles();
+    setTimeout(() => { if (fileResults[path] === result) { delete fileResults[path]; renderFiles(); } }, 30000);
 }
 
 // Escape a description but keep plain <a href="http(s)://...">text</a> links, as written by the sync, clickable.
@@ -324,8 +394,8 @@ async function refreshData() {
     const [events, issues, journal, cycles] = await Promise.all(
         ['/api/events', '/api/issues', '/api/journal', '/api/cycles'].map(p => api(p)));
     allEvents = events;
-    renderEvents();
-    renderIssues(issues);
+    allIssues = issues;
+    renderFiles();
     rows('journal', journal, j => `<tr>
         <td class="nowrap">${esc(when(j.at))}</td>
         <td><span class="tag ${esc(j.action)}">${esc(ACTIONS[j.action] || j.action)}</span></td>
@@ -341,8 +411,14 @@ async function refreshStatus() {
         const status = await api('/api/status');
         renderStatus(status);
         const cycleId = status.lastCycle?.id ?? null;
+        const wasBusy = busy;
+        busy = status.running;
         // While a cycle runs, events and the journal change before the cycle is recorded.
-        if (cycleId !== lastCycleId || status.running) { lastCycleId = cycleId; await refreshData(); }
+        if (cycleId !== lastCycleId || status.fileSyncs !== lastFileSyncs || status.running) {
+            lastCycleId = cycleId;
+            lastFileSyncs = status.fileSyncs;
+            await refreshData();
+        } else if (busy !== wasBusy) renderFiles();
     } catch (e) {
         $('status').className = 'error';
         $('headline').textContent = 'Нет связи с сервисом';
@@ -366,6 +442,12 @@ $('events').addEventListener('click', event => {
     const button = event.target.closest('button.link');
     if (button) openGoogleModal(button.dataset.path, button.dataset.uid);
 });
+for (const table of ['events', 'issues']) {
+    $(table).addEventListener('click', event => {
+        const button = event.target.closest('button.sync-file');
+        if (button && !button.disabled) syncFile(button.dataset.path);
+    });
+}
 $('google-modal-close').addEventListener('click', closeGoogleModal);
 $('google-modal').addEventListener('click', event => { if (event.target === event.currentTarget) closeGoogleModal(); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeGoogleModal(); });

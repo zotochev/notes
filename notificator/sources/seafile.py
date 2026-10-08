@@ -54,18 +54,21 @@ class SeafileSource:
             for entry in listing["dirent_list"]:
                 inner = entry["parent_dir"].rstrip("/") + "/" + entry["name"]
                 if any(folder == "/" or inner.startswith(folder + "/") for folder in folders):
-                    files[f"/{library}{inner}"] = RemoteFile(
-                        path=f"/{library}{inner}",
-                        version=entry["id"],
-                        link=f"{self._url}/lib/{repo_id}/file{quote(inner)}",
-                    )
+                    files[f"/{library}{inner}"] = self._remote_file(library, repo_id, inner, entry["id"])
         return list(files.values())
+
+    def stat(self, path: str) -> RemoteFile:
+        library, inner = _split(path)
+        repo_id = self._repo_id(library)
+        detail = self._get(f"/api2/repos/{repo_id}/file/detail/", {"p": inner})
+        try:
+            return self._remote_file(library, repo_id, inner, detail["id"])
+        except (KeyError, TypeError) as e:
+            raise SourceError(f"Seafile не сообщил версию файла {path}") from e
 
     def read_text(self, file: RemoteFile) -> str:
         library, inner = _split(file.path)
-        repo_id = (self._repo_ids or self._load_repo_ids()).get(library)
-        if repo_id is None:
-            raise SourceError(f"библиотека {library!r} не найдена в Seafile")
+        repo_id = self._repo_id(library)
         download_url = self._get(f"/api2/repos/{repo_id}/file/", {"p": inner, "reuse": "1"})
         response = send(
             "GET", download_url, self._retry_delays, verify=self._verify_ssl, timeout=self._timeout
@@ -73,6 +76,19 @@ class SeafileSource:
         if response.status_code != 200:
             raise SourceError(f"не удалось скачать {file.path}: HTTP {response.status_code}")
         return response.content.decode("utf-8", errors="ignore")
+
+    def _remote_file(self, library: str, repo_id: str, inner: str, object_id: str) -> RemoteFile:
+        return RemoteFile(
+            path=f"/{library}{inner}",
+            version=object_id,
+            link=f"{self._url}/lib/{repo_id}/file{quote(inner)}",
+        )
+
+    def _repo_id(self, library: str) -> str:
+        repo_id = (self._repo_ids or self._load_repo_ids()).get(library)
+        if repo_id is None:
+            raise SourceError(f"библиотека {library!r} не найдена в Seafile")
+        return repo_id
 
     def _load_repo_ids(self) -> dict[str, str]:
         repo_ids: dict[str, str] = {}

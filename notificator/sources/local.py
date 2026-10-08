@@ -20,14 +20,27 @@ class LocalSource:
             try:
                 for path in root.rglob("*"):
                     if path.is_file():
-                        stat = path.stat()
-                        files[path.as_posix()] = RemoteFile(path.as_posix(), f"{stat.st_mtime_ns}:{stat.st_size}")
+                        files[path.as_posix()] = _remote_file(path)
             except OSError as e:
                 raise SourceError(f"не удалось прочитать каталог {root}: {e}") from e
         return list(files.values())
+
+    def stat(self, path: str) -> RemoteFile:
+        file = Path(path)
+        try:
+            if not file.is_file():
+                raise SourceError(f"файл не найден: {path}")
+            return _remote_file(file)
+        except OSError as e:
+            raise SourceError(f"не удалось прочитать файл: {e}") from e
 
     def read_text(self, file: RemoteFile) -> str:
         try:
             return Path(file.path).read_text(encoding="utf-8", errors="ignore")
         except OSError as e:
             raise SourceError(f"не удалось прочитать файл: {e}") from e
+
+
+def _remote_file(path: Path) -> RemoteFile:
+    stat = path.stat()
+    return RemoteFile(path.as_posix(), f"{stat.st_mtime_ns}:{stat.st_size}")

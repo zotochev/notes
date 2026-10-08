@@ -92,6 +92,12 @@ class WebDavSource:
                         files[entry.path] = RemoteFile(entry.path, entry.version, entry.link)
         return list(files.values())
 
+    def stat(self, path: str) -> RemoteFile:
+        entries = self._propfind(path, "0", (self._username, self._password()))
+        if len(entries) != 1 or entries[0].is_dir:
+            raise SourceError(f"файл не найден: {path}")
+        return RemoteFile(path, entries[0].version, entries[0].link)
+
     def read_text(self, file: RemoteFile) -> str:
         response = self._send("GET", file.path, (self._username, self._password()))
         if response.status_code != 200:
@@ -141,6 +147,8 @@ class WebDavSource:
                 raise _TooBigForOneRequest(f"HTTP {status}")
         if status in (401, 403):
             raise SourceError(f"ошибка авторизации WebDAV (HTTP {status}) для {path}")
+        if status == 404:
+            raise SourceError(f"не найдено на сервере: {path}")
         if status != 207:
             raise SourceError(f"не удалось получить список {path}: HTTP {status}")
         try:

@@ -115,3 +115,14 @@ def test_reading_a_missing_file_is_an_error(server):
 def test_watch_path_without_a_library_is_rejected():
     with pytest.raises(SourceError, match="имени библиотеки"):
         SeafileSource("http://x", USER, PASSWORD, ["/"])
+
+
+def test_stat_reports_a_file_as_the_listing_does(server):
+    listed = {f.path: f for f in source(server).list_files()}
+
+    assert source(server).stat("/mylib/notes/план.md") == listed["/mylib/notes/план.md"]
+
+
+def test_stat_of_a_missing_file_is_an_error(server):
+    with pytest.raises(SourceError):
+        source(server).stat("/mylib/gone.md")

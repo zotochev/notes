@@ -1,9 +1,10 @@
 """
 The running service: sync cycles for the active source in a background thread.
 
-The thread owns the engine and its Store. Everything the web layer needs to
-show is written to the database; the only things shared in memory are the
-"running" flag and the wake-up signals.
+Whoever synchronises owns the engine and its Store: the background thread for
+cycles, the calling thread for a single-file sync, never both at once.
+Everything the web layer needs to show is written to the database; the only
+things shared in memory are the "running" flag and the wake-up signals.
 """
 from __future__ import annotations
 
@@ -45,6 +46,10 @@ class SyncService:
         self._stop = threading.Event()
         self._deletions_approved = threading.Event()
         self._running = threading.Event()
+        # Held by whatever is synchronising: a cycle and a single-file sync never run together.
+        self._busy = threading.Lock()
+        # How many single-file syncs have finished; the admin page reloads its data when this changes.
+        self.file_syncs = 0
         self._next_run_at: float | None = None
         self._thread: threading.Thread | None = None
         # What the running cycle is doing right now, for the admin page.
@@ -82,28 +87,49 @@ class SyncService:
     def run_cycle(self) -> CycleReport:
         """Run one cycle and record its report. Never raises: any failure becomes report.error."""
         allow_mass_delete = self._deletions_approved.is_set()
-        self._running.set()
+        with self._busy:
+            self._running.set()
+            try:
+                with Store(self._db_path) as store:
+                    report = self._guarded(store, lambda engine: engine.run_cycle(allow_mass_delete))
+                    if allow_mass_delete and report.error is None:
+                        self._deletions_approved.clear()
+                    store.add_cycle(self.source_name, asdict(report))
+            finally:
+                self._running.clear()
+                self.progress = ""
+        return report
+
+    def sync_file(self, path: str) -> CycleReport | None:
+        """Read and apply one file now, in the calling thread. Returns None when a sync is already running.
+
+        The report is not recorded as a cycle. Never raises: any failure becomes report.error.
+        """
+        if not self._busy.acquire(blocking=False):
+            return None
         try:
+            self._running.set()
             with Store(self._db_path) as store:
-                try:
-                    calendar = self._calendar_factory()
-                    report = SyncEngine(
-                        self.source_name, self._source, calendar, store, self._settings,
-                        on_progress=self._set_progress,
-                    ).run_cycle(allow_mass_delete)
-                except CalendarUnavailable as e:
-                    report = CycleReport(error=f"календарь недоступен: {e}")
-                except Exception as e:
-                    # A bug must be visible in the admin page, not only in a log nobody reads.
-                    logger.exception("Sync cycle crashed")
-                    report = CycleReport(error=f"внутренняя ошибка: {type(e).__name__}: {e}")
-                if allow_mass_delete and report.error is None:
-                    self._deletions_approved.clear()
-                store.add_cycle(self.source_name, asdict(report))
+                report = self._guarded(store, lambda engine: engine.sync_file(path))
+            self.file_syncs += 1
         finally:
             self._running.clear()
             self.progress = ""
+            self._busy.release()
         return report
+
+    def _guarded(self, store: Store, run: Callable[[SyncEngine], CycleReport]) -> CycleReport:
+        try:
+            calendar = self._calendar_factory()
+            return run(SyncEngine(
+                self.source_name, self._source, calendar, store, self._settings, on_progress=self._set_progress,
+            ))
+        except CalendarUnavailable as e:
+            return CycleReport(error=f"календарь недоступен: {e}")
+        except Exception as e:
+            # A bug must be visible in the admin page, not only in a log nobody reads.
+            logger.exception("Sync crashed")
+            return CycleReport(error=f"внутренняя ошибка: {type(e).__name__}: {e}")
 
     def _set_progress(self, message: str) -> None:
         self.progress = message

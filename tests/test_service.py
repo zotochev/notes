@@ -121,3 +121,33 @@ def test_background_loop_runs_and_reacts_to_trigger(world):
         assert world.calendar.summaries() == ["Renamed"]
     finally:
         world.service.stop()
+
+
+def test_one_file_is_synced_without_recording_a_cycle(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.service.run_cycle()
+    world.source.files["/a.md"] = event("u1", "Renamed")
+
+    report = world.service.sync_file("/a.md")
+
+    assert report.pushed == 1
+    assert world.calendar.summaries() == ["Renamed"]
+    assert len(world.cycles()) == 1
+    assert (world.service.file_syncs, world.service.running) == (1, False)
+
+
+def test_file_is_not_synced_while_a_cycle_runs(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.service.run_cycle()
+    world.source.files["/a.md"] = event("u1", "Renamed")
+    during_cycle = []
+    original = world.source.read_text
+
+    def read_and_try(file):
+        during_cycle.append(world.service.sync_file("/a.md"))
+        return original(file)
+
+    world.source.read_text = read_and_try
+    world.service.run_cycle()
+
+    assert during_cycle == [None]

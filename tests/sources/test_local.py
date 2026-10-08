@@ -44,3 +44,16 @@ def test_unreadable_file_is_an_error(tmp_path):
 
     with pytest.raises(SourceError):
         source.read_text(file)
+
+
+def test_stat_reports_a_file_as_the_listing_does(tmp_path):
+    (tmp_path / "a.md").write_text("привет", encoding="utf-8")
+    source = LocalSource([tmp_path])
+    (listed,) = source.list_files()
+
+    assert source.stat(listed.path) == listed
+
+
+def test_stat_of_a_missing_file_is_an_error(tmp_path):
+    with pytest.raises(SourceError):
+        LocalSource([tmp_path]).stat((tmp_path / "gone.md").as_posix())

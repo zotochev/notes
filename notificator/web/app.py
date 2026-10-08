@@ -34,6 +34,10 @@ class _Text(BaseModel):
     text: str
 
 
+class _Path(BaseModel):
+    path: str
+
+
 def create_app(
     service: SyncService,
     config: Config,
@@ -84,6 +88,7 @@ def create_app(
             "state": state,
             "running": service.running,
             "progress": service.progress,
+            "fileSyncs": service.file_syncs,
             "secondsUntilNextCycle": service.seconds_until_next_cycle,
             "lastCycle": last,
             "counts": {
@@ -138,6 +143,14 @@ def create_app(
     def sync_now() -> dict[str, bool]:
         service.trigger()
         return {"ok": True}
+
+    @app.post("/api/files/sync")
+    def sync_file(body: _Path) -> dict[str, Any]:
+        """Read one tracked file from the source and apply it right now; answers when it is done."""
+        report = service.sync_file(body.path)
+        if report is None:
+            raise HTTPException(status_code=409, detail="Сейчас идёт синхронизация, повторите после её окончания")
+        return asdict(report)
 
     @app.post("/api/deletions/approve")
     def approve_deletions() -> dict[str, bool]:

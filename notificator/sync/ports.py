@@ -37,6 +37,10 @@ class Source(Protocol):
         """Return every file under the watched paths. Must be complete or raise SourceError."""
         ...
 
+    def stat(self, path: str) -> RemoteFile:
+        """Return one file exactly as list_files would report it. Raises SourceError, also when it is missing."""
+        ...
+
     def read_text(self, file: RemoteFile) -> str:
         """Return the file's text or raise SourceError."""
         ...
