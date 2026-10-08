@@ -466,8 +466,8 @@ async function loadCalendars() {
     try {
         const calendars = await api('/api/calendars');
         calendarNames = Object.fromEntries(calendars.map(c => [c.id, c.summary]));
-        $('calendars').innerHTML = 'Доступные календари: ' + calendars.map(c =>
-            `<b>${esc(c.summary)}</b> <span class="mono">${esc(c.id)}</span>`).join(' · ');
+        $('calendars').innerHTML = 'Доступные календари:' + calendars.map(c =>
+            `<div><b>${esc(c.summary)}</b> <span class="mono">${esc(c.id)}</span></div>`).join('');
         renderEvents();
     } catch (e) { $('calendars').textContent = `Список календарей недоступен: ${e.message}`; }
 }

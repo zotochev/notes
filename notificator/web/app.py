@@ -15,7 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from notificator.calendars.google import GoogleCalendar
@@ -62,9 +62,12 @@ def create_app(
     def store() -> Store:
         return Store(data_dir / STATE_FILE)
 
+    # Read once: a page newer than the running process would call endpoints the process does not have.
+    page = _INDEX.read_text(encoding="utf-8")
+
     @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(_INDEX, media_type="text/html; charset=utf-8")
+    def index() -> HTMLResponse:
+        return HTMLResponse(page)
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
