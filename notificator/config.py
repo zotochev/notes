@@ -45,6 +45,8 @@ class SeafileSourceConfig(_Strict):
     url: str
     username: str
     password: str
+    # Address for links to files in event descriptions, when `url` is one that only this machine can open.
+    public_url: str | None = None
     # Each path starts with a library name: "/mylib" or "/mylib/notes".
     watch_paths: list[str] = Field(min_length=1)
     verify_ssl: bool = True

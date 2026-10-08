@@ -33,11 +33,14 @@ class SeafileSource:
         password: str,
         watch_paths: list[str],
         verify_ssl: bool = True,
+        public_url: str | None = None,
         concurrency: int = 4,
         timeout: float = 60,
         retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
     ) -> None:
         self._url = url.rstrip("/")
+        # Where people open the files: differs from `url` when the service reaches Seafile by a local address.
+        self._public_url = (public_url or url).rstrip("/")
         self._username = username
         self._password = password
         self._watch = [_split(p) for p in watch_paths]
@@ -105,7 +108,7 @@ class SeafileSource:
         return RemoteFile(
             path=f"/{library}{inner}",
             version=object_id,
-            link=f"{self._url}/lib/{repo_id}/file{quote(inner)}",
+            link=f"{self._public_url}/lib/{repo_id}/file{quote(inner)}",
         )
 
     def _repo_id(self, library: str) -> str:

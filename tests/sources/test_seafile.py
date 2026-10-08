@@ -187,3 +187,12 @@ def test_folder_that_cannot_be_listed_fails_the_listing(server):
 
     with pytest.raises(SourceError):
         src.list_files()
+
+
+def test_links_use_the_public_address_when_one_is_given(server):
+    src = SeafileSource(server.url, USER, PASSWORD, ["/mylib"], public_url="https://cloud.example.com:8443/")
+
+    links = {f.path: f.link for f in src.list_files()}
+
+    assert links["/mylib/bar.md"] == "https://cloud.example.com:8443/lib/id-mylib/file/bar.md"
+    assert src.stat("/mylib/bar.md").link == links["/mylib/bar.md"]
