@@ -104,10 +104,13 @@ class WebDavSource:
         return RemoteFile(path, entries[0].version, entries[0].link)
 
     def read_text(self, file: RemoteFile) -> str:
+        return self.read_bytes(file).decode("utf-8", errors="ignore")
+
+    def read_bytes(self, file: RemoteFile) -> bytes:
         response = self._send("GET", file.path, (self._username, self._password()))
         if response.status_code != 200:
             raise SourceError(f"не удалось скачать {file.path}: HTTP {response.status_code}")
-        return response.content.decode("utf-8", errors="ignore")
+        return response.content
 
     def _children(self, path: str, auth: tuple[str, str]) -> list[_Entry]:
         return [e for e in self._propfind(path, "1", auth) if e.path != path]

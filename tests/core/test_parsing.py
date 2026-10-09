@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from notificator.core.parsing import ParseContext, parse_csv, parse_text
+from notificator.core.parsing import ParseContext, parse_csv, parse_file, parse_text
 
 TZ = ZoneInfo("Europe/Ulyanovsk")
 CTX = ParseContext(default_tz=TZ, now=datetime(2026, 3, 10, 15, 42, 7, tzinfo=TZ))
@@ -293,3 +293,82 @@ def test_csv_with_a_header_and_no_rows_has_no_events_and_no_issues():
 def test_csv_that_does_not_start_with_the_header_is_ignored():
     assert parse_csv("\nuid,summary,start\na1,Meeting,2025-11-11\n", CTX).events == ()
     assert parse_csv("sep=;\nuid;summary;start\na1;Meeting;2025-11-11\n", CTX).events == ()
+
+
+def workbook(**sheets: list[list]) -> bytes:
+    """An .xlsx file with the given sheets, each a list of rows."""
+    import io
+
+    from openpyxl import Workbook
+
+    book = Workbook()
+    book.remove(book.active)
+    for title, rows in sheets.items():
+        sheet = book.create_sheet(title)
+        for row in rows:
+            sheet.append(row)
+    buffer = io.BytesIO()
+    book.save(buffer)
+    return buffer.getvalue()
+
+
+def test_xlsx_sheet_with_the_required_columns_is_an_events_table():
+    data = workbook(Plan=[
+        ["Location", "UID", " Summary ", "Start", "end", "attendees", None],
+        ["Room 5", 3333344447, "Meeting", datetime(2025, 11, 11, 8, 30), None, "user@example.com; friend@example.com"],
+        [None, "a2", "Whole day", datetime(2025, 11, 12), None, None],
+        [None, "a3", "Typed as text", "2025-11-13 09:00", "2025-11-13 10:00", "user@example.com, friend@example.com"],
+        [None, None, "No uid", datetime(2025, 11, 14), None, None],
+    ])
+
+    result = parse_file("/plan.xlsx", data, CTX)
+
+    assert result.issues == ()
+    first, second, third = result.events
+    assert (first.uid, first.summary, first.location) == ("3333344447", "Meeting", "Room 5")
+    assert first.start == datetime(2025, 11, 11, 8, 30, tzinfo=TZ)
+    assert first.attendees == third.attendees == ("user@example.com", "friend@example.com")
+    assert second.start == parse_text(
+        "<event><uid>x</uid><summary>s</summary><start>2025-11-12</start></event>", CTX
+    ).events[0].start
+    assert (third.start, third.end) == (
+        datetime(2025, 11, 13, 9, 0, tzinfo=TZ), datetime(2025, 11, 13, 10, 0, tzinfo=TZ),
+    )
+
+
+def test_xlsx_sheets_without_the_columns_are_ignored_and_the_rest_are_all_read():
+    data = workbook(
+        Notes=[["Just", "some", "numbers"], [1, 2, 3]],
+        Empty=[],
+        Q1=[["uid", "summary", "start"], ["a1", "First", "2025-11-11"]],
+        Q2=[["uid", "summary", "start"], ["a2", "Second", "2025-11-12"]],
+    )
+
+    result = parse_file("/plan.xlsx", data, CTX)
+
+    assert ([e.summary for e in result.events], result.issues) == (["First", "Second"], ())
+
+
+def test_xlsx_without_any_events_sheet_is_ignored():
+    result = parse_file("/budget.xlsx", workbook(Budget=[["item", "price"], ["tea", 5]]), CTX)
+
+    assert (result.events, result.issues, result.opaque_failure) == ((), (), False)
+
+
+def test_xlsx_bad_row_is_reported_with_its_sheet_and_row():
+    data = workbook(Plan=[["uid", "summary", "start"], ["a1", "Good", "2025-11-11"], ["a2", "Bad", "не дата"]])
+
+    result = parse_file("/plan.xlsx", data, CTX)
+
+    assert [e.uid for e in result.events] == ["a1"]
+    (issue,) = result.issues
+    assert issue.message.startswith("лист «Plan», строка 3:")
+    assert result.broken_uids == {"a2"}
+
+
+def test_file_that_is_not_a_workbook_is_reported_and_confirms_nothing():
+    result = parse_file("/plan.xlsx", b"<!DOCTYPE html><html>not a workbook</html>", CTX)
+
+    (issue,) = result.issues
+    assert issue.message.startswith("не удалось открыть книгу Excel")
+    assert not result.confirms_absent("a1")

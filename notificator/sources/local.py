@@ -38,8 +38,11 @@ class LocalSource:
         return None
 
     def read_text(self, file: RemoteFile) -> str:
+        return self.read_bytes(file).decode("utf-8", errors="ignore")
+
+    def read_bytes(self, file: RemoteFile) -> bytes:
         try:
-            return Path(file.path).read_text(encoding="utf-8", errors="ignore")
+            return Path(file.path).read_bytes()
         except OSError as e:
             raise SourceError(f"не удалось прочитать файл: {e}") from e
 

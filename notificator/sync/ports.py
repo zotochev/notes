@@ -49,6 +49,10 @@ class Source(Protocol):
         """Return the file's text or raise SourceError."""
         ...
 
+    def read_bytes(self, file: RemoteFile) -> bytes:
+        """Return the file's content as it is stored, or raise SourceError."""
+        ...
+
 
 class Calendar(Protocol):
     def insert(self, calendar_id: str, event_id: str, body: dict[str, Any]) -> None:

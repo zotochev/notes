@@ -9,7 +9,7 @@ from notificator.sync.ports import CalendarError, EventAlreadyExists, EventNotFo
 
 class FakeSource:
     def __init__(self) -> None:
-        self.files: dict[str, str] = {}
+        self.files: dict[str, str | bytes] = {}
         self.links: dict[str, str] = {}
         self.fail_listing = False
         self.fail_reading: set[str] = set()
@@ -28,10 +28,14 @@ class FakeSource:
         return RemoteFile(path, version=str(hash(self.files[path])), link=self.links.get(path))
 
     def read_text(self, file: RemoteFile) -> str:
+        return self.read_bytes(file).decode("utf-8")
+
+    def read_bytes(self, file: RemoteFile) -> bytes:
         self.reads.append(file.path)
         if file.path in self.fail_reading:
             raise SourceError(f"cannot read {file.path}")
-        return self.files[file.path]
+        content = self.files[file.path]
+        return content if isinstance(content, bytes) else content.encode("utf-8")
 
 
 class FakeCalendar:

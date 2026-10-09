@@ -651,3 +651,15 @@ def test_unchanged_file_with_a_parse_error_is_read_again_so_a_stale_error_goes_a
 
     assert world.source.reads == ["/a.md"]
     assert world.store.issues() == []
+
+
+def test_excel_workbook_is_read_as_bytes_and_its_lock_file_is_ignored(world):
+    from tests.core.test_parsing import workbook
+
+    world.source.files["/plan.xlsx"] = workbook(Plan=[["uid", "summary", "start"], ["u1", "From Excel", "2030-01-01 10:00"]])
+    world.source.files["/~$plan.xlsx"] = b"\x05lock"
+
+    report = world.sync()
+
+    assert world.calendar.summaries() == ["From Excel"]
+    assert (report.listed, report.read, world.store.issues()) == (1, 1, [])

@@ -98,12 +98,15 @@ class SeafileSource:
             raise SourceError(f"Seafile не сообщил версию файла {path}") from e
 
     def read_text(self, file: RemoteFile) -> str:
+        return self.read_bytes(file).decode("utf-8", errors="ignore")
+
+    def read_bytes(self, file: RemoteFile) -> bytes:
         library, inner = _split(file.path)
         repo_id = self._repo_id(library)
         download_url = self._get(f"/api2/repos/{repo_id}/file/", {"p": inner, "reuse": "1"})
         if not isinstance(download_url, str):
             raise SourceError(f"не удалось скачать {file.path}: Seafile не дал ссылку на файл")
-        return self._download(download_url, file.path).content.decode("utf-8", errors="ignore")
+        return self._download(download_url, file.path).content
 
     def _download(self, given: str, path: str) -> requests.Response:
         """Fetch a file by the link Seafile gave, making sure the answer is the file.

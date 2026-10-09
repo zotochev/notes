@@ -15,7 +15,7 @@ import io
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import PurePosixPath
 from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
@@ -83,10 +83,17 @@ class ParseResult:
         return all(e.uid != uid for e in self.events)
 
 
-def parse_file(path: str, text: str, ctx: ParseContext) -> ParseResult:
-    """Parse a file's text with the parser that fits its type."""
-    parser = _PARSERS_BY_SUFFIX.get(PurePosixPath(path).suffix.lower(), parse_text)
-    return parser(text, ctx)
+def is_binary(path: str) -> bool:
+    """True for a file type that must be read as bytes, not as text."""
+    return PurePosixPath(path).suffix.lower() in _BINARY_PARSERS_BY_SUFFIX
+
+
+def parse_file(path: str, content: str | bytes, ctx: ParseContext) -> ParseResult:
+    """Parse a file with the parser that fits its type: bytes when is_binary(path), text otherwise."""
+    suffix = PurePosixPath(path).suffix.lower()
+    if isinstance(content, bytes):
+        return _BINARY_PARSERS_BY_SUFFIX[suffix](content, ctx)
+    return _PARSERS_BY_SUFFIX.get(suffix, parse_text)(content, ctx)
 
 
 def parse_text(
@@ -134,18 +141,69 @@ def parse_csv(text: str, ctx: ParseContext) -> ParseResult:
             )
             continue
         values = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-        uid = values.get("uid", "")
-        if not uid:
-            continue
-        fields: dict[str, FieldValue] = {k: values[k] for k in _SCALAR_FIELDS if values.get(k)}
-        fields["attendees"] = _split_list(values.get("attendees", "").replace(",", ";"))
-        try:
-            event = build_event(fields, ctx)
-        except EventError as e:
-            collector.fail(f"строка {row_num}: {e}", uid if _UID_RE.match(uid) else None, None)
-            continue
-        collector.add(event, None, where=f"строка {row_num}: ")
+        _add_table_row(collector, values, f"строка {row_num}: ", ctx)
     return collector.result()
+
+
+def parse_xlsx(data: bytes, ctx: ParseContext) -> ParseResult:
+    """Parse an Excel workbook: every sheet whose first row names the required columns is an events table.
+
+    Other sheets are ignored, and so is a workbook without such a sheet. Rows without uid are skipped.
+    """
+    collector = _Collector()
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        collector.fail("для файлов Excel нужен пакет openpyxl: pip install -r requirements.txt", None, None)
+        return collector.result()
+    try:
+        # read_only: sheets are streamed. data_only: a formula gives its last computed value, not its text.
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        sheets = [(sheet.title, list(sheet.iter_rows(values_only=True))) for sheet in workbook.worksheets]
+        workbook.close()
+    except Exception as e:
+        # openpyxl raises many unrelated types for a damaged, encrypted or non-Excel file.
+        collector.fail(f"не удалось открыть книгу Excel: {type(e).__name__}: {e}", None, None)
+        return collector.result()
+
+    for title, rows in sheets:
+        names = [_cell_text(cell).lower() for cell in (rows[0] if rows else ())]
+        if not set(_CSV_REQUIRED) <= set(names):
+            continue
+        for row_num, row in enumerate(rows[1:], start=2):
+            values = {name: _cell_text(cell) for name, cell in zip(names, row) if name}
+            _add_table_row(collector, values, f"лист «{title}», строка {row_num}: ", ctx)
+    return collector.result()
+
+
+def _add_table_row(collector: _Collector, values: dict[str, str], where: str, ctx: ParseContext) -> None:
+    """Turn one table row, keyed by lower-case column name, into an event or an issue."""
+    uid = values.get("uid", "")
+    if not uid:
+        return
+    fields: dict[str, FieldValue] = {k: values[k] for k in _SCALAR_FIELDS if values.get(k)}
+    fields["attendees"] = _split_list(values.get("attendees", "").replace(",", ";"))
+    try:
+        event = build_event(fields, ctx)
+    except EventError as e:
+        collector.fail(f"{where}{e}", uid if _UID_RE.match(uid) else None, None)
+        return
+    collector.add(event, None, where=where)
+
+
+def _cell_text(value: object) -> str:
+    """An Excel cell as the text a person would have typed into a CSV."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        # A date cell comes as midnight: written without a time it reads as a date, like in text files.
+        return value.date().isoformat() if value.time() == time() else value.isoformat(sep=" ")
+    if isinstance(value, (date, time)):
+        return value.isoformat()
+    if isinstance(value, float) and value.is_integer():
+        # A number typed as 123 is stored as 123.0.
+        return str(int(value))
+    return str(value).strip()
 
 
 def _csv_delimiter(text: str) -> str | None:
@@ -168,6 +226,8 @@ def _csv_delimiter(text: str) -> str | None:
 
 # File types with their own format; every other watched file is scanned for <event> blocks.
 _PARSERS_BY_SUFFIX = {".csv": parse_csv, ".tsv": parse_csv}
+# File types that are not text: their parsers take the file's bytes.
+_BINARY_PARSERS_BY_SUFFIX = {".xlsx": parse_xlsx}
 
 
 def build_event(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpec:

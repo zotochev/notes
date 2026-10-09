@@ -27,7 +27,7 @@ def test_minimal_config_gets_defaults(tmp_path):
     config = load_config(write(tmp_path, VALID))
 
     assert config.default_calendar == "primary"
-    assert config.extensions == [".csv", ".md", ".tsv", ".txt"]
+    assert config.extensions == [".csv", ".md", ".tsv", ".txt", ".xlsx"]
     assert config.sources["cloud"].watch_paths == ["/"]
 
 

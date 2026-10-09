@@ -17,7 +17,7 @@ from pathlib import PurePosixPath
 from zoneinfo import ZoneInfo
 
 from notificator.core.model import RemoteFile, TrackedEvent
-from notificator.core.parsing import ParseContext, parse_file
+from notificator.core.parsing import ParseContext, is_binary, parse_file
 from notificator.core.planning import (
     Action, Delete, Push, applied_version, files_to_read, plan_file, plan_vanished, too_many_deletes,
 )
@@ -35,7 +35,7 @@ _PROGRESS_INTERVAL_SEC = 5
 class SyncSettings:
     default_calendar: str
     default_tz: ZoneInfo
-    extensions: frozenset[str] = frozenset({".md", ".txt", ".csv", ".tsv"})
+    extensions: frozenset[str] = frozenset({".md", ".txt", ".csv", ".tsv", ".xlsx"})
     # Deletions wait for approval when a cycle wants to delete at least
     # `held_deletes_min` events and more than this share of everything tracked.
     max_delete_ratio: float = 0.2
@@ -202,7 +202,7 @@ class SyncEngine:
         in_file = tracked.get(path, {})
         try:
             file = self._source.stat(path)
-            text = self._source.read_text(file) if file else ""
+            text = self._read(file) if file else ""
         except SourceError as e:
             report.read_failed = 1
             self._store.set_issues(self._source_id, path, "source", [(None, str(e))])
@@ -250,17 +250,22 @@ class SyncEngine:
             self._store.clear_file_version(self._source_id, file.path)
 
     def _is_watched(self, path: str) -> bool:
-        return PurePosixPath(path).suffix.lower() in self._settings.extensions
+        file = PurePosixPath(path)
+        # "~$name.xlsx" is the lock file Excel keeps next to an open workbook.
+        return file.suffix.lower() in self._settings.extensions and not file.name.startswith("~$")
 
-    def _read_all(self, files: list[RemoteFile], report: CycleReport) -> list[tuple[RemoteFile, str]]:
+    def _read(self, file: RemoteFile) -> str | bytes:
+        return self._source.read_bytes(file) if is_binary(file.path) else self._source.read_text(file)
+
+    def _read_all(self, files: list[RemoteFile], report: CycleReport) -> list[tuple[RemoteFile, str | bytes]]:
         """Read files concurrently. A file that fails to read is skipped: its events stay as they are."""
-        def read(file: RemoteFile) -> str | SourceError:
+        def read(file: RemoteFile) -> str | bytes | SourceError:
             try:
-                return self._source.read_text(file)
+                return self._read(file)
             except SourceError as e:
                 return e
 
-        results: dict[str, str | SourceError] = {}
+        results: dict[str, str | bytes | SourceError] = {}
         last_progress = time.monotonic()
         with ThreadPoolExecutor(max_workers=self._settings.read_concurrency) as pool:
             futures = {pool.submit(read, f): f for f in files}
@@ -269,7 +274,7 @@ class SyncEngine:
                 if time.monotonic() - last_progress >= _PROGRESS_INTERVAL_SEC:
                     last_progress = time.monotonic()
                     self._say(f"прочитано файлов {len(results)} из {len(files)}")
-        texts: list[tuple[RemoteFile, str]] = []
+        texts: list[tuple[RemoteFile, str | bytes]] = []
         for file in files:
             result = results[file.path]
             if isinstance(result, SourceError):
