@@ -663,3 +663,23 @@ def test_excel_workbook_is_read_as_bytes_and_its_lock_file_is_ignored(world):
 
     assert world.calendar.summaries() == ["From Excel"]
     assert (report.listed, report.read, world.store.issues()) == (1, 1, [])
+
+
+def test_workbook_that_cannot_be_opened_is_ignored_unless_events_came_from_it(world):
+    from tests.core.test_parsing import workbook
+
+    world.source.files["/stray.xlsx"] = b"PK not really a workbook"
+    world.source.files["/plan.xlsx"] = workbook(Plan=[["uid", "summary", "start"], ["u1", "Kept", "2030-01-01 10:00"]])
+    world.sync()
+    assert world.store.issues() == []
+    world.source.reads.clear()
+    world.sync()
+    assert world.source.reads == []
+
+    world.source.files["/plan.xlsx"] = b"PK damaged on the way"
+    world.sync()
+
+    assert world.calendar.summaries() == ["Kept"]
+    (issue,) = world.store.issues()
+    assert (issue.path, issue.kind) == ("/plan.xlsx", "parse")
+    assert issue.message.startswith("не удалось открыть книгу Excel")

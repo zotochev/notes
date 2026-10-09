@@ -17,7 +17,7 @@ from pathlib import PurePosixPath
 from zoneinfo import ZoneInfo
 
 from notificator.core.model import RemoteFile, TrackedEvent
-from notificator.core.parsing import ParseContext, is_binary, parse_file
+from notificator.core.parsing import ParseContext, ParseResult, is_binary, parse_file
 from notificator.core.planning import (
     Action, Delete, Push, applied_version, files_to_read, plan_file, plan_vanished, too_many_deletes,
 )
@@ -128,10 +128,7 @@ class SyncEngine:
             )
         ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
         for file, text in self._read_all(to_read, report):
-            parsed = parse_file(file.path, text, ctx)
-            self._store.set_issues(
-                self._source_id, file.path, "parse", [(i.uid, i.message) for i in parsed.issues]
-            )
+            parsed = self._parse(file, text, tracked.get(file.path, {}), ctx)
             plans[file.path] = plan_file(
                 self._source_id, file, parsed, tracked.get(file.path, {}), self._settings.default_calendar
             )
@@ -215,8 +212,7 @@ class SyncEngine:
             report.read = 1
             self._store.set_issues(self._source_id, path, "source", [])
             ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
-            parsed = parse_file(path, text, ctx)
-            self._store.set_issues(self._source_id, path, "parse", [(i.uid, i.message) for i in parsed.issues])
+            parsed = self._parse(file, text, in_file, ctx)
             actions = plan_file(self._source_id, file, parsed, in_file, self._settings.default_calendar)
         delete_count = sum(isinstance(a, Delete) for a in actions)
         hold_deletes = too_many_deletes(
@@ -232,6 +228,17 @@ class SyncEngine:
             self._apply_file(file, actions, in_file, report, hold_deletes)
         elif self._apply(path, actions, in_file, report, hold_deletes):
             self._store.forget_file(self._source_id, path)
+
+    def _parse(
+        self, file: RemoteFile, content: str | bytes, tracked: dict[str, TrackedEvent], ctx: ParseContext
+    ) -> ParseResult:
+        """Parse a file that was read and record what is wrong in it."""
+        parsed = parse_file(file.path, content, ctx)
+        # A file that cannot even be opened is worth reporting only while events are tracked from it:
+        # otherwise it is most likely not an events file at all, like a table without the columns.
+        issues = () if parsed.unreadable and not tracked else parsed.issues
+        self._store.set_issues(self._source_id, file.path, "parse", [(i.uid, i.message) for i in issues])
+        return parsed
 
     def _apply_file(
         self,

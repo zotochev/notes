@@ -75,6 +75,9 @@ class ParseResult:
     # True when something failed and we could not tell which uid it was. In
     # that case nothing about absent uids can be concluded for this text.
     opaque_failure: bool = False
+    # True when the file could not be opened as what its type says it is, so
+    # there is no telling whether it was ever meant to hold events.
+    unreadable: bool = False
 
     def confirms_absent(self, uid: str) -> bool:
         """True only if this text was fully understood and has no such uid."""
@@ -163,7 +166,7 @@ def parse_xlsx(data: bytes, ctx: ParseContext) -> ParseResult:
         workbook.close()
     except Exception as e:
         # openpyxl raises many unrelated types for a damaged, encrypted or non-Excel file.
-        collector.fail(f"не удалось открыть книгу Excel: {type(e).__name__}: {e}", None, None)
+        collector.fail_whole_file(f"не удалось открыть книгу Excel: {type(e).__name__}: {e}")
         return collector.result()
 
     for title, rows in sheets:
@@ -274,6 +277,7 @@ class _Collector:
         self._issues: list[ParseIssue] = []
         self._failed_uids: set[str] = set()
         self._opaque = False
+        self._unreadable = False
 
     def add(self, event: EventSpec, excerpt: str | None, where: str = "") -> None:
         if event.uid in self._events:
@@ -291,12 +295,18 @@ class _Collector:
         else:
             self._failed_uids.add(uid)
 
+    def fail_whole_file(self, message: str) -> None:
+        """The file cannot be opened as its type at all."""
+        self.fail(message, None, None)
+        self._unreadable = True
+
     def result(self) -> ParseResult:
         return ParseResult(
             events=tuple(self._events.values()),
             issues=tuple(self._issues),
             broken_uids=frozenset(self._failed_uids - self._events.keys()),
             opaque_failure=self._opaque,
+            unreadable=self._unreadable,
         )
 
 
