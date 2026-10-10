@@ -6,179 +6,265 @@
 <title>Notificator</title>
 <style>
     :root {
-        --bg: #f6f7f9; --card: #fff; --text: #1c2024; --muted: #68707a; --line: #e3e6ea;
-        --ok: #1a7f43; --ok-bg: #e4f5ea; --warn: #9a5b00; --warn-bg: #fff3d6; --bad: #b3261e; --bad-bg: #fdeceb;
-        --accent: #1a5fd0;
+        --bg: #f4f5f7; --card: #fff; --text: #1c2024; --muted: #636b75; --line: #e3e6ea; --soft: #f0f2f5;
+        --ok: #1a7f43; --ok-bg: #e4f5ea; --warn: #8a5200; --warn-bg: #fff3d6; --bad: #b3261e; --bad-bg: #fdeceb;
+        --accent: #1a5fd0; --accent-text: #fff;
     }
     @media (prefers-color-scheme: dark) {
         :root {
-            --bg: #15171a; --card: #1e2125; --text: #e6e8eb; --muted: #9aa3ad; --line: #2e3238;
+            --bg: #15171a; --card: #1e2125; --text: #e6e8eb; --muted: #9aa3ad; --line: #2e3238; --soft: #262a2f;
             --ok: #6bd08f; --ok-bg: #173323; --warn: #f0c060; --warn-bg: #3a2f12; --bad: #ff8a80; --bad-bg: #3d1b19;
-            --accent: #7fb0ff;
+            --accent: #7fb0ff; --accent-text: #10151c;
         }
     }
     * { box-sizing: border-box; }
     body { margin: 0; padding: 16px; background: var(--bg); color: var(--text);
-           font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    main { max-width: 1200px; margin: 0 auto; display: grid; gap: 14px; }
-    section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-    h1 { font-size: 15px; margin: 0; color: var(--muted); font-weight: 600; }
-    h2 { font-size: 15px; margin: 0 0 10px; }
+           font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow-wrap: anywhere; }
+    main { max-width: 1100px; margin: 0 auto; display: grid; gap: 14px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; min-width: 0; }
+    h1 { font-size: 15px; margin: 0; font-weight: 650; }
+    h2 { font-size: 15px; margin: 0 0 12px; font-weight: 650; }
     .muted { color: var(--muted); }
     .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+    .small { font-size: 12px; }
+    .nowrap { white-space: nowrap; }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .grow { flex: 1; }
-    button { font: inherit; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line);
+    .grow { flex: 1; min-width: 0; }
+    .hidden { display: none !important; }
+    .bad { color: var(--bad); }
+    a { color: var(--accent); }
+
+    button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line);
              background: var(--card); color: var(--text); cursor: pointer; }
     button:hover:not(:disabled) { border-color: var(--accent); }
+    button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     button:disabled { opacity: .5; cursor: default; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
     button.danger { border-color: var(--bad); color: var(--bad); }
-    input[type=search] { font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line);
-                         background: var(--bg); color: var(--text); min-width: 240px; }
-    #headline { font-size: 22px; font-weight: 650; }
+    button.quiet { padding: 2px 9px; font-size: 12px; color: var(--muted); }
+    button.link { border: none; background: none; padding: 0; color: var(--accent); font-weight: 600; text-align: left; }
+    button.link:hover { text-decoration: underline; }
+    input[type=search] { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
+                         background: var(--bg); color: var(--text); width: 100%; max-width: 320px; }
+
+    /* Header */
+    #headline { font-size: 22px; font-weight: 650; margin-top: 4px; }
     #status.ok #headline { color: var(--ok); }
     #status.attention #headline { color: var(--warn); }
     #status.error #headline { color: var(--bad); }
-    #status-error { background: var(--bad-bg); color: var(--bad); padding: 8px 10px; border-radius: 7px; margin-top: 10px; }
-    .banner { background: var(--warn-bg); color: var(--warn); padding: 10px 12px; border-radius: 7px; margin-bottom: 10px; }
-    .table-wrap { overflow-x: auto; }
-    table { border-collapse: collapse; width: 100%; }
-    th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 10px 6px 0; white-space: nowrap; }
-    td { padding: 6px 10px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
-    td.nowrap { white-space: nowrap; }
-    tr.file td { background: var(--bg); padding: 6px 10px; }
-    button.sync-file { padding: 2px 8px; font-size: 12px; }
-    .bad { color: var(--bad); }
-    #stage { margin-top: 6px; }
-    /* What a running sync has not confirmed yet is shown dimmed. */
-    #attention.stale .table-wrap { opacity: .55; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 12px; }
+    .tile { background: var(--soft); border-radius: 10px; padding: 9px 12px; min-width: 0; }
+    .tile b { display: block; font-size: 19px; font-weight: 650; line-height: 1.25; }
+    .tile.warn b { color: var(--warn); }
+    .tile span { color: var(--muted); font-size: 12px; }
+    #stage { margin-top: 12px; }
+    .bar { height: 6px; border-radius: 3px; background: var(--soft); overflow: hidden; margin-top: 6px; }
+    .bar > div { height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s; }
     .step { color: var(--muted); }
     .step.now { color: var(--text); font-weight: 650; }
     .step.done { color: var(--ok); }
+    .notice { padding: 9px 12px; border-radius: 8px; margin-top: 12px; }
+    .notice.bad { background: var(--bad-bg); }
+    .notice.warn { background: var(--warn-bg); color: var(--warn); }
+
+    /* Tabs */
+    /* On a narrow screen the tabs scroll sideways; the scrollbar itself would only be noise. */
+    .tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px;
+                   color: var(--muted); font-weight: 600; white-space: nowrap; }
+    .tabs button[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
+    .panel { display: grid; gap: 14px; }
+
+    /* Tags and chips */
     .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
     .tag.parse, .tag.held { background: var(--warn-bg); color: var(--warn); }
     .tag.sync, .tag.source, .tag.error { background: var(--bad-bg); color: var(--bad); }
     .tag.created, .tag.updated { background: var(--ok-bg); color: var(--ok); }
-    .tag.deleted, .tag.task { background: var(--line); color: var(--text); }
-    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+    .tag.deleted, .tag.task, .tag.plain { background: var(--soft); color: var(--text); }
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chips button { padding: 3px 11px; border-radius: 14px; font-size: 13px; }
+    .chips button[aria-pressed=true] { background: var(--text); color: var(--card); border-color: var(--text); }
+
+    /* Lists made of rows instead of tables, so that they can stack on a narrow screen */
+    .list > * + * { border-top: 1px solid var(--line); }
+    .item { display: grid; gap: 4px 14px; padding: 8px 0; align-items: start; min-width: 0; }
+    .item > * { min-width: 0; }
+    .file-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--soft); border-radius: 8px;
+                 padding: 6px 10px; margin-top: 10px; }
+    .file-head:first-child { margin-top: 0; }
+    .event { grid-template-columns: 12px minmax(0, 2.4fr) minmax(0, 1.9fr) minmax(0, 1.1fr); padding-left: 10px; }
+    .event.past { opacity: .55; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); margin-top: 6px; }
     .dot.pending { background: var(--warn); }
+    .journal { grid-template-columns: 130px 96px minmax(0, 1.5fr) minmax(0, 1.3fr); }
+    .issue { grid-template-columns: max-content minmax(0, 1fr); padding: 6px 0 6px 10px; }
+    .issue-card + .issue-card { margin-top: 12px; }
+    .stale { opacity: .55; }
     details > summary { cursor: pointer; font-weight: 600; }
+    details[open] > summary { margin-bottom: 10px; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 10px 6px 0; white-space: nowrap; }
+    td { padding: 6px 10px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
     pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; }
-    .hidden { display: none; }
-    button.link { border: none; background: none; padding: 0; color: var(--accent); font-weight: 650; text-align: left; }
-    button.link:hover { text-decoration: underline; }
+    .idrow { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 3px 0; }
+
+    /* Modal */
     .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); display: flex; align-items: center;
              justify-content: center; padding: 16px; z-index: 10; }
-    .modal.hidden { display: none; }
-    .modal-box { background: var(--card); border-radius: 10px; padding: 18px 20px; width: 100%; max-width: 620px;
+    .modal-box { background: var(--card); border-radius: 12px; padding: 18px 20px; width: 100%; max-width: 620px;
                  max-height: 85vh; overflow-y: auto; }
     .field { display: flex; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
     .field > :first-child { flex: 0 0 110px; color: var(--muted); }
-    .field > :last-child { flex: 1; min-width: 0; word-break: break-word; white-space: pre-wrap; }
+    .field > :last-child { flex: 1; min-width: 0; white-space: pre-wrap; }
     .field ul { margin: 0; padding-left: 18px; white-space: normal; }
-    a { color: var(--accent); }
+
+    @media (max-width: 640px) {
+        body { padding: 10px; }
+        .card { padding: 14px; }
+        #kind-chips { flex-basis: 100%; }
+        .event { grid-template-columns: 12px minmax(0, 1fr); }
+        .event > :nth-child(n+3) { grid-column: 2; }
+        .journal { grid-template-columns: minmax(0, 1fr) max-content; }
+        .journal > :nth-child(n+3) { grid-column: 1 / -1; }
+        .issue { grid-template-columns: minmax(0, 1fr); }
+        .field { flex-direction: column; gap: 2px; }
+        .field > :first-child { flex: none; }
+    }
 </style>
 </head>
 <body>
 <main>
-    <section id="status" class="starting">
+    <section id="status" class="card starting">
         <div class="row">
-            <h1 class="grow">Notificator <span id="version" class="muted" style="font-weight:400"></span></h1>
-            <button id="sync-now">Синхронизировать сейчас</button>
+            <h1 class="grow">Notificator <span id="version" class="muted small" style="font-weight:400"></span></h1>
+            <button id="sync-now" class="primary">Синхронизировать сейчас</button>
         </div>
         <div id="headline">Загрузка…</div>
-        <div id="status-line" class="muted"></div>
+        <div id="tiles" class="tiles"></div>
         <div id="stage" class="hidden"></div>
-        <div id="inactive-sources" class="muted hidden"></div>
-        <div id="status-error" class="hidden"></div>
+        <div id="status-error" class="notice bad hidden"></div>
+        <div id="inactive-sources" class="muted small hidden" style="margin-top:10px"></div>
     </section>
 
-    <section id="attention" class="hidden">
-        <h2>Требует внимания</h2>
-        <div id="stale-note" class="muted hidden" style="margin-bottom:10px">Это итог прошлого цикла. Список обновится, когда закончится идущая сейчас синхронизация.</div>
-        <div id="held-banner" class="banner hidden">
-            <div class="row">
-                <span class="grow" id="held-text"></span>
-                <button id="approve-deletions" class="danger"></button>
+    <nav class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-tab="overview">Обзор</button>
+        <button role="tab" data-tab="events">События и задачи <span id="events-total" class="muted"></span></button>
+        <button role="tab" data-tab="journal">Журнал</button>
+        <button role="tab" data-tab="google">Google и настройки</button>
+    </nav>
+
+    <div id="tab-overview" class="panel" role="tabpanel">
+        <section id="attention" class="card hidden">
+            <h2>Требует внимания</h2>
+            <div id="stale-note" class="muted small hidden" style="margin:-6px 0 12px">Это итог прошлого цикла. Список обновится, когда закончится идущая сейчас синхронизация.</div>
+            <div id="attention-body">
+                <div id="held" class="notice warn hidden" style="margin:0 0 12px">
+                    <div class="row">
+                        <span class="grow" id="held-text"></span>
+                        <button id="approve-deletions" class="danger"></button>
+                    </div>
+                    <details style="margin-top:8px">
+                        <summary style="font-weight:400">Показать, что будет удалено</summary>
+                        <div id="held-list" class="list"></div>
+                    </details>
+                </div>
+                <div id="issues"></div>
             </div>
-        </div>
-        <div class="table-wrap"><table>
-            <thead><tr><th>Что случилось</th><th>UID</th><th>Подробности</th></tr></thead>
-            <tbody id="issues"></tbody>
-        </table></div>
-    </section>
+        </section>
 
-    <section>
-        <div class="row" style="margin-bottom:10px">
-            <h2 class="grow" style="margin:0">События <span id="events-count" class="muted"></span></h2>
-            <input id="filter" type="search" placeholder="Поиск по названию, файлу, UID">
-        </div>
-        <div class="table-wrap"><table>
-            <thead><tr><th></th><th>Название</th><th>Начало</th><th>Конец</th><th>UID</th><th>Календарь или список</th></tr></thead>
-            <tbody id="events"></tbody>
-        </table></div>
-    </section>
+        <section class="card">
+            <div class="row" style="margin-bottom:8px">
+                <h2 class="grow" style="margin:0">Последние действия</h2>
+                <button class="quiet" data-go="journal">Весь журнал</button>
+            </div>
+            <div id="recent" class="list"></div>
+        </section>
 
-    <section>
-        <details open>
-            <summary>Журнал действий</summary>
-            <div class="table-wrap"><table>
-                <thead><tr><th>Когда</th><th>Действие</th><th>Файл</th><th>UID</th><th>Подробности</th></tr></thead>
-                <tbody id="journal"></tbody>
-            </table></div>
-        </details>
-    </section>
+        <section id="listing-section" class="card hidden">
+            <details>
+                <summary>Чтение списка файлов <span id="listing-summary" class="muted" style="font-weight:400"></span></summary>
+                <p class="muted small" style="margin:0 0 8px">Источник читается по одной папке за запрос. Папки, в которых с прошлого раза
+                    ничего не изменилось, не перечитываются. Число одновременных запросов подстраивается под скорость ответа сервера.</p>
+                <div id="listing-current" class="muted small" style="margin-bottom:6px"></div>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>Папка</th><th>Состояние</th><th>Папок прочитано</th><th>Без изменений</th><th>В очереди</th><th>Файлов</th></tr></thead>
+                    <tbody id="listing"></tbody>
+                </table></div>
+            </details>
+        </section>
+    </div>
 
-    <section>
-        <details>
-            <summary>История циклов</summary>
+    <div id="tab-events" class="panel hidden" role="tabpanel">
+        <section class="card">
+            <div class="row" style="margin-bottom:10px">
+                <input id="filter" type="search" placeholder="Поиск по названию, файлу, UID" class="grow">
+                <span id="events-count" class="muted small"></span>
+            </div>
+            <div class="row" style="margin-bottom:12px">
+                <div class="chips grow" id="kind-chips">
+                    <button data-kind="all">Все</button>
+                    <button data-kind="event">События</button>
+                    <button data-kind="task">Задачи</button>
+                    <button data-kind="pending">Не записано</button>
+                    <button id="hide-past" aria-pressed="false" title="Скрыть события, которые уже закончились">Без прошедших</button>
+                </div>
+                <div class="chips" id="view-chips">
+                    <button data-view="files">По файлам</button>
+                    <button data-view="dates">По дате</button>
+                </div>
+            </div>
+            <div id="events"></div>
+        </section>
+    </div>
+
+    <div id="tab-journal" class="panel hidden" role="tabpanel">
+        <section class="card">
+            <div class="row" style="margin-bottom:10px">
+                <h2 class="grow" style="margin:0">Журнал действий</h2>
+                <div class="chips" id="journal-chips">
+                    <button data-journal="all">Все</button>
+                    <button data-journal="error">Только ошибки</button>
+                </div>
+            </div>
+            <div id="journal" class="list"></div>
+        </section>
+        <section class="card">
+            <h2>История циклов</h2>
             <div class="table-wrap"><table>
                 <thead><tr><th>Когда</th><th>Файлов</th><th>Прочитано</th><th>Записано</th><th>Удалено</th><th>Ошибок</th><th>Итог</th></tr></thead>
                 <tbody id="cycles"></tbody>
             </table></div>
-        </details>
-    </section>
+        </section>
+    </div>
 
-    <section id="listing-section" class="hidden">
-        <details>
-            <summary>Чтение списка файлов <span id="listing-summary" class="muted" style="font-weight:400"></span></summary>
-            <p class="muted">Источник читается по одной папке за запрос. Папки, в которых с прошлого раза ничего
-                не изменилось, не перечитываются. Число одновременных запросов подстраивается под скорость ответа сервера.</p>
-            <div id="listing-current" class="mono muted"></div>
-            <div class="table-wrap"><table>
-                <thead><tr><th>Папка</th><th>Состояние</th><th>Папок прочитано</th><th>Без изменений</th><th>В очереди</th><th>Файлов</th></tr></thead>
-                <tbody id="listing"></tbody>
-            </table></div>
-        </details>
-    </section>
-
-    <section>
-        <h2>Google Calendar</h2>
-        <div class="row">
-            <span id="google-state" class="grow"></span>
-            <a href="/google/login"><button type="button">Войти в Google</button></a>
-            <button id="google-logout">Выйти</button>
-        </div>
-        <div id="calendars" class="muted" style="margin-top:8px"></div>
-        <div id="tasklists" class="muted" style="margin-top:8px"></div>
-    </section>
-
-    <section>
-        <details>
-            <summary>Настройки</summary>
-            <p class="muted">Настройки лежат в файле <span class="mono">config.json</span> в каталоге данных; изменения применяются после перезапуска сервиса.</p>
+    <div id="tab-google" class="panel hidden" role="tabpanel">
+        <section class="card">
+            <h2>Google</h2>
+            <div class="row">
+                <span id="google-state" class="grow"></span>
+                <a href="/google/login" tabindex="-1"><button id="google-login" type="button"></button></a>
+                <button id="google-logout">Выйти</button>
+            </div>
+            <div id="calendars" style="margin-top:14px"></div>
+            <div id="tasklists" style="margin-top:14px"></div>
+        </section>
+        <section class="card">
+            <h2>Настройки</h2>
+            <p class="muted small" style="margin:0">Настройки лежат в файле <span class="mono">config.json</span> в каталоге данных; изменения применяются после перезапуска сервиса.</p>
             <pre id="config" class="mono"></pre>
-        </details>
-    </section>
+        </section>
+    </div>
 </main>
 
 <div id="google-modal" class="modal hidden">
     <div class="modal-box">
         <div class="row">
             <h2 id="google-modal-title" class="grow" style="margin:0"></h2>
-            <button id="google-modal-close" title="Закрыть">×</button>
+            <button id="google-modal-close" title="Закрыть" aria-label="Закрыть">×</button>
         </div>
-        <p id="google-modal-note" class="muted" style="margin:4px 0 10px"></p>
+        <p id="google-modal-note" class="muted small" style="margin:4px 0 10px"></p>
         <div id="google-modal-body"></div>
     </div>
 </div>
@@ -188,15 +274,23 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
 const ISSUE_KINDS = {
-    parse: 'Ошибка в файле', sync: 'Календарь отклонил', source: 'Файл не прочитан', held: 'Ждёт подтверждения удаления',
+    parse: 'Ошибка в файле', sync: 'Google отклонил', source: 'Файл не прочитан', held: 'Ждёт подтверждения удаления',
 };
 const ACTIONS = {created: 'создано', updated: 'обновлено', deleted: 'удалено', error: 'ошибка'};
+const STAGES = [['listing', 'Список файлов'], ['reading', 'Чтение файлов'], ['writing', 'Запись в Google']];
+const LISTING_STATES = {
+    running: ['читается', 'parse'], queued: ['в очереди', 'plain'],
+    done: ['прочитано', 'created'], unchanged: ['без изменений', 'plain'],
+};
 
 let lastCycleId = null;
-let activeSource = null;
 let lastFileSyncs = null;
+let lastStatus = null;
+let activeSource = null;
+let defaultTimeZone = null;
 let allEvents = [];
 let allIssues = [];
+let allJournal = [];
 let calendarNames = {};
 let tasklistNames = {};
 let tasksAllowed = null;
@@ -204,6 +298,8 @@ let tasksAllowed = null;
 let busy = false;
 // path -> {text, bad}: what the last sync of a file ended with, shown next to its button for a while.
 const fileResults = {};
+// What is on screen: the tab, and how the events and the journal are filtered.
+const view = {tab: 'overview', kind: 'all', hidePast: false, by: 'files', journal: 'all'};
 
 async function api(path, options) {
     const response = await fetch(path, options);
@@ -212,25 +308,42 @@ async function api(path, options) {
     return body;
 }
 
-function when(iso, timeZone) {
-    if (!iso) return '';
-    const options = {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'};
+// ---------- dates
+
+function parts(iso, timeZone, options) {
     try { return new Date(iso).toLocaleString('ru-RU', timeZone ? {...options, timeZone} : options); }
     catch { return iso; }
 }
+const when = (iso, tz) => iso ? parts(iso, tz, {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : '';
+const dayOf = (iso, tz) => iso ? parts(iso, tz, {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'}).replace(' г.', '') : '';
+const timeOf = (iso, tz) => iso ? parts(iso, tz, {hour: '2-digit', minute: '2-digit'}) : '';
 
-function day(iso, timeZone) {
-    if (!iso) return '';
-    const options = {day: '2-digit', month: '2-digit', year: 'numeric'};
-    try { return new Date(iso).toLocaleDateString('ru-RU', timeZone ? {...options, timeZone} : options); }
-    catch { return iso; }
+// "ср, 14 окт. 2026 · 15:00–15:45", or both days when the event does not end on the day it starts.
+function eventWhen(e) {
+    const tz = e.time_zone;
+    const sameDay = dayOf(e.start, tz) === dayOf(e.end, tz);
+    const range = sameDay
+        ? `${dayOf(e.start, tz)} · ${timeOf(e.start, tz)}–${timeOf(e.end, tz)}`
+        : `${dayOf(e.start, tz)} ${timeOf(e.start, tz)} – ${dayOf(e.end, tz)} ${timeOf(e.end, tz)}`;
+    // The zone is worth a mention only when it is not the usual one.
+    return esc(range) + (tz && defaultTimeZone && tz !== defaultTimeZone ? ` <span class="muted small">${esc(tz)}</span>` : '');
 }
 
-function rows(target, items, render, colspan, empty) {
-    $(target).innerHTML = items.length
-        ? items.map(render).join('')
-        : `<tr><td colspan="${colspan}" class="muted">${empty}</td></tr>`;
+function duration(seconds) {
+    if (seconds < 60) return `${seconds} с`;
+    const minutes = Math.floor(seconds / 60);
+    return minutes < 60 ? `${minutes} мин ${seconds % 60} с` : `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
 }
+
+// Roughly how long ago, in the largest unit that fits: "5 мин назад", "3 ч назад", "2 дн. назад".
+function ago(iso) {
+    const minutes = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+    if (minutes < 1) return 'только что';
+    if (minutes < 60) return `${minutes} мин назад`;
+    return minutes < 2880 ? `${Math.floor(minutes / 60)} ч назад` : `${Math.floor(minutes / 1440)} дн. назад`;
+}
+
+// ---------- small pieces
 
 function groupBy(items, key) {
     const groups = new Map();
@@ -242,21 +355,88 @@ function groupBy(items, key) {
     return [...groups.values()];
 }
 
-// Header row of a file's group: its path and, for files of the active source, the button that syncs it now.
-function fileRow(path, colspan, label, canSync = true) {
-    const result = fileResults[path];
-    return `<tr class="file"><td colspan="${colspan}"><div class="row">
-        <span class="mono">${label}</span>
-        ${canSync ? `<button class="sync-file" data-path="${esc(path)}" ${busy ? 'disabled' : ''}
-            title="Скачать файл из источника, разобрать и записать изменения в календарь">Синхронизировать</button>` : ''}
-        ${canSync && result ? `<span class="${result.bad ? 'bad' : 'muted'}">${esc(result.text)}</span>` : ''}
-    </div></td></tr>`;
+function rows(target, items, render, empty) {
+    $(target).innerHTML = items.length ? items.map(render).join('') : `<div class="muted" style="padding:8px 0">${empty}</div>`;
 }
 
-const STAGES = [['listing', 'Список файлов'], ['reading', 'Чтение файлов'], ['writing', 'Запись в Google']];
+function syncButton(path) {
+    const result = fileResults[path];
+    return `<button class="quiet sync-file" data-path="${esc(path)}" ${busy ? 'disabled' : ''}
+            title="Скачать этот файл из источника, разобрать и записать изменения в Google">⟳ Синхронизировать</button>`
+        + (result ? `<span class="small ${result.bad ? 'bad' : 'muted'}">${esc(result.text)}</span>` : '');
+}
 
-function duration(seconds) {
-    return seconds < 60 ? `${seconds} с` : `${Math.floor(seconds / 60)} мин ${seconds % 60} с`;
+function setPressed(container, attribute, value) {
+    for (const button of $(container).querySelectorAll(`[data-${attribute}]`)) {
+        button.setAttribute('aria-pressed', button.dataset[attribute] === value);
+    }
+}
+
+// ---------- header
+
+function renderStatus(s) {
+    lastStatus = s;
+    const attention = s.counts.issues + s.counts.heldDeletes;
+    const headlines = {
+        starting: 'Первая синхронизация ещё не завершилась',
+        ok: 'Всё в порядке',
+        attention: 'Нужно ваше внимание',
+        error: 'Синхронизация остановлена',
+    };
+    $('status').className = 'card ' + s.state;
+    $('headline').textContent = headlines[s.state];
+    $('version').textContent = s.version ? `версия ${s.version}` : '';
+    $('sync-now').disabled = s.running;
+    $('sync-now').textContent = s.running ? 'Идёт синхронизация…' : 'Синхронизировать сейчас';
+
+    const tasks = allEvents.filter(e => e.kind === 'task').length;
+    const next = s.running ? 'идёт сейчас'
+        : s.secondsUntilNextCycle !== null ? `через ${duration(s.secondsUntilNextCycle)}` : '—';
+    const tiles = [
+        [allEvents.length ? allEvents.length - tasks : s.counts.events, 'событий', ''],
+        [allEvents.length ? tasks : '—', 'задач', ''],
+        [s.counts.files, 'файлов с ними', ''],
+        [attention, 'требуют внимания', attention ? 'warn' : ''],
+        [s.lastCycle ? ago(s.lastCycle.at) : '—', 'последний цикл', ''],
+        [next, 'следующий цикл', ''],
+    ];
+    $('tiles').innerHTML = tiles.map(([value, label, cls]) =>
+        `<div class="tile ${cls}"><b>${esc(value)}</b><span>${label}</span></div>`).join('');
+    $('events-total').textContent = s.counts.events || '';
+
+    const inactive = Object.entries(s.inactiveSources);
+    $('inactive-sources').classList.toggle('hidden', !inactive.length);
+    $('inactive-sources').textContent = inactive.length
+        ? 'В Google ещё есть события прежних источников ('
+            + inactive.map(([name, count]) => `${name}: ${count}`).join(', ')
+            + ') — они удаляются, потому что источник больше не активен.'
+        : '';
+    activeSource = s.source;
+
+    const error = s.lastCycle?.error;
+    $('status-error').classList.toggle('hidden', !error);
+    $('status-error').textContent = !error ? ''
+        : s.running ? `${error}. Это итог прошлого цикла; сейчас идёт новый.`
+        : `${error}. В Google ничего не менялось; попытка повторится автоматически.`;
+    renderStage(s.stage);
+    $('stale-note').classList.toggle('hidden', !s.running);
+    $('attention-body').classList.toggle('stale', s.running);
+
+    const held = s.counts.heldDeletes;
+    if (held && !$('approve-deletions').dataset.armed) $('approve-deletions').textContent = `Удалить ${held}`;
+    $('held-text').textContent = `Синхронизация хочет удалить из Google сразу много — ${held}. Это большая часть `
+        + 'отслеживаемого, поэтому удаление отложено до вашего подтверждения.';
+
+    $('google-state').innerHTML = s.googleSignedIn
+        ? `Вход выполнен. Календарь по умолчанию: <span class="mono">${esc(s.defaultCalendar)}</span>`
+        : '<span class="bad">Вход в Google не выполнен — ничего не синхронизируется.</span>';
+    $('google-login').textContent = s.googleSignedIn ? 'Войти заново' : 'Войти в Google';
+    $('google-login').className = s.googleSignedIn ? '' : 'primary';
+    $('google-logout').classList.toggle('hidden', !s.googleSignedIn);
+    if (s.googleSignedIn && s.tasksAllowed !== tasksAllowed) {
+        tasksAllowed = s.tasksAllowed;
+        loadTasklists(s.defaultTasklist);
+    }
 }
 
 // The stages of the running sync in one line: the finished ones ticked, the current one with its count.
@@ -269,104 +449,123 @@ function renderStage(stage) {
     const count = stage.phase === 'listing'
         ? (stage.done ? `: папок ${stage.done}` + (stage.total > stage.done ? `, в очереди ${stage.total - stage.done}` : '') : '')
         : (stage.total ? `: ${stage.done} из ${stage.total}` : '');
+    // Each stage is an equal share of the bar; within a stage it follows the count.
+    const share = stage.total ? stage.done / stage.total : 0;
+    const percent = Math.round((current + share) / stages.length * 100);
     $('stage').innerHTML = stages.map(([, label], i) =>
         i < current ? `<span class="step done">✓ ${label}</span>`
         : i === current ? `<span class="step now">${label}${count}</span>`
         : `<span class="step">${label}</span>`).join('<span class="muted"> → </span>')
-        + ` <span class="muted">· идёт ${duration(stage.seconds)}${stage.file ? ' · ' + esc(stage.file) : ''}</span>`;
+        + ` <span class="muted small">· идёт ${duration(stage.seconds)}${stage.file ? ' · ' + esc(stage.file) : ''}</span>`
+        + `<div class="bar" role="progressbar" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"><div style="width:${percent}%"></div></div>`;
 }
 
-function renderStatus(s) {
-    const headlines = {
-        starting: 'Первая синхронизация ещё не завершилась',
-        ok: 'Всё в порядке',
-        attention: `Требует внимания: ${s.counts.issues + s.counts.heldDeletes}`,
-        error: 'Синхронизация остановлена',
-    };
-    $('status').className = s.state;
-    $('version').textContent = s.version ? `· версия ${s.version}` : '';
-    $('headline').textContent = headlines[s.state];
-    const parts = [`источник: ${s.source} (${s.sourceType})`, `событий: ${s.counts.events} в ${s.counts.files} файлах`];
-    if (s.lastCycle) parts.push(`последний цикл: ${when(s.lastCycle.at)}`);
-    if (s.running) parts.push(s.progress ? `идёт синхронизация: ${s.progress}` : 'идёт синхронизация…');
-    else if (s.secondsUntilNextCycle !== null) parts.push(`следующий через ${s.secondsUntilNextCycle} с`);
-    $('status-line').textContent = parts.join(' · ');
-    $('sync-now').disabled = s.running;
+// ---------- overview
 
-    const inactive = Object.entries(s.inactiveSources);
-    $('inactive-sources').classList.toggle('hidden', !inactive.length);
-    $('inactive-sources').textContent = inactive.length
-        ? 'В календаре ещё есть события прежних источников ('
-            + inactive.map(([name, count]) => `${name}: ${count}`).join(', ')
-            + ') — они удаляются, потому что источник больше не активен.'
-        : '';
-    activeSource = s.source;
-
-    const error = s.lastCycle?.error;
-    $('status-error').classList.toggle('hidden', !error);
-    $('status-error').textContent = !error ? ''
-        : s.running ? `${error}. Это итог прошлого цикла; сейчас идёт новый.`
-        : `${error}. Календарь не менялся; попытка повторится автоматически.`;
-    renderStage(s.stage);
-    $('stale-note').classList.toggle('hidden', !s.running);
-    $('attention').classList.toggle('stale', s.running);
-
-    const held = s.counts.heldDeletes;
-    $('held-banner').classList.toggle('hidden', !held);
-    if (held) {
-        $('held-text').textContent = `Цикл хочет удалить из календаря ${held} событий — это большая часть отслеживаемых, `
-            + 'поэтому удаление отложено. Проверьте список ниже.';
-        if (!$('approve-deletions').dataset.armed) $('approve-deletions').textContent = `Удалить ${held} событий`;
-    }
-    $('google-state').innerHTML = s.googleSignedIn
-        ? `Вход выполнен. Календарь по умолчанию: <span class="mono">${esc(s.defaultCalendar)}</span>`
-        : '<span style="color:var(--bad)">Вход в Google не выполнен — события не синхронизируются.</span>';
-    $('google-logout').disabled = !s.googleSignedIn;
-    if (s.googleSignedIn && s.tasksAllowed !== tasksAllowed) {
-        tasksAllowed = s.tasksAllowed;
-        loadTasklists(s.defaultTasklist);
-    }
+function fileLabel(source, path) {
+    return (source === activeSource ? '' : esc(source) + ': ') + esc(path);
 }
 
 function renderIssues() {
     $('attention').classList.toggle('hidden', !allIssues.length);
-    // Files of the active source first, then by path.
-    const files = groupBy(allIssues, i => i.source + '\n' + i.path).sort(([a], [b]) =>
+    const held = allIssues.filter(i => i.kind === 'held');
+    $('held').classList.toggle('hidden', !held.length);
+    rows('held-list', held, i => `<div class="item" style="grid-template-columns:minmax(0,1fr) max-content">
+        <span class="mono">${fileLabel(i.source, i.path)}</span><span class="mono muted">${esc(i.uid)}</span></div>`, '');
+
+    // One card per file; files of the active source first, then by path.
+    const files = groupBy(allIssues.filter(i => i.kind !== 'held'), i => i.source + '\n' + i.path).sort(([a], [b]) =>
         (a.source !== activeSource) - (b.source !== activeSource)
         || a.source.localeCompare(b.source) || a.path.localeCompare(b.path));
-    rows('issues', files, issues => {
+    $('issues').innerHTML = files.map(issues => {
         const {source, path} = issues[0];
-        const active = source === activeSource;
-        return fileRow(path, 3, (active ? '' : esc(source) + ': ') + esc(path), active)
-            + issues.map(i => `<tr>
-                <td class="nowrap"><span class="tag ${esc(i.kind)}">${esc(ISSUE_KINDS[i.kind] || i.kind)}</span></td>
-                <td class="mono">${esc(i.uid)}</td><td>${esc(i.message)}</td></tr>`).join('');
-    }, 3, '');
+        return `<div class="issue-card">
+            <div class="file-head"><span class="mono grow">${fileLabel(source, path)}</span>${source === activeSource ? syncButton(path) : ''}</div>
+            <div class="list">${issues.map(i => `<div class="item issue">
+                <span><span class="tag ${esc(i.kind)}">${esc(ISSUE_KINDS[i.kind] || i.kind)}</span>${i.uid ? ` <span class="mono muted">${esc(i.uid)}</span>` : ''}</span>
+                <span>${esc(i.message)}</span></div>`).join('')}</div></div>`;
+    }).join('');
+}
+
+function journalRow(j) {
+    return `<div class="item journal">
+        <span class="muted small">${esc(when(j.at))}</span>
+        <span><span class="tag ${esc(j.action)}">${esc(ACTIONS[j.action] || j.action)}</span></span>
+        <span>${esc(j.detail)}${j.uid ? ` <span class="mono muted">${esc(j.uid)}</span>` : ''}</span>
+        <span class="mono muted">${esc(j.path)}</span></div>`;
+}
+
+function renderJournal() {
+    rows('recent', allJournal.slice(0, 6), journalRow, 'Пока ничего не происходило');
+    const shown = view.journal === 'error' ? allJournal.filter(j => j.action === 'error') : allJournal;
+    rows('journal', shown, journalRow, view.journal === 'error' ? 'Ошибок в журнале нет' : 'Пока пусто');
+    setPressed('journal-chips', 'journal', view.journal);
+}
+
+function renderListing(l) {
+    $('listing-section').classList.toggle('hidden', !l);
+    if (!l) return;
+    const pace = l.pauseSec ? `сервер отвечает медленно: по одному запросу с паузой ${l.pauseSec} с`
+        : `одновременных запросов: ${l.concurrency} из ${l.maxConcurrency}`;
+    // One quiet line; the details are inside the collapsed section.
+    $('listing-summary').textContent = l.active
+        ? `— идёт: прочитано папок ${l.read}, в очереди ${l.waiting}`
+        : `— папок прочитано ${l.read}, без изменений ${l.unchanged}`;
+    $('listing-current').textContent = `Файлов найдено: ${l.files} · ${pace}`
+        + (l.current.length ? ' · сейчас читается: ' + l.current.join(', ') : '');
+    $('listing').innerHTML = l.groups.map(g => `<tr>
+        <td class="mono">${esc(g.folder)}</td>
+        <td><span class="tag ${LISTING_STATES[g.state][1]}">${LISTING_STATES[g.state][0]}</span></td>
+        <td>${g.read}</td><td>${g.unchanged}</td><td>${g.waiting || ''}</td><td>${g.files}</td></tr>`).join('');
+}
+
+// ---------- events
+
+const isPast = e => e.kind !== 'task' && e.end && new Date(e.end) < new Date();
+
+function eventRow(e, withFile) {
+    const isTask = e.kind === 'task';
+    const time = isTask
+        ? (e.start ? 'срок: ' + esc(dayOf(e.start, e.time_zone)) : '<span class="muted">без срока</span>')
+        : eventWhen(e);
+    const state = e.synced ? 'Записано в Google' : 'Ещё не записано в Google';
+    return `<div class="item event ${isPast(e) ? 'past' : ''}">
+        <span class="dot ${e.synced ? '' : 'pending'}" title="${state}" role="img" aria-label="${state}"></span>
+        <span><button class="link" data-path="${esc(e.path)}" data-uid="${esc(e.uid)}" title="Показать, как это выглядит в Google">${esc(e.summary)}</button>${isTask ? ' <span class="tag task">задача</span>' : ''}${e.recurrence ? ' <span class="tag plain" title="' + esc(e.recurrence) + '">повторяется</span>' : ''}
+            ${e.location ? `<div class="muted small">${esc(e.location)}</div>` : ''}
+            ${withFile ? `<div class="mono muted">${esc(e.path)}</div>` : ''}</span>
+        <span>${time}</span>
+        <span class="small">${esc((isTask ? tasklistNames : calendarNames)[e.calendar_id] || e.calendar_id)} <span class="mono muted">${esc(e.uid)}</span></span></div>`;
 }
 
 function renderEvents() {
     const query = $('filter').value.trim().toLowerCase();
-    const shown = allEvents.filter(e => !query || [e.summary, e.path, e.uid, e.location].join('\n').toLowerCase().includes(query));
-    $('events-count').textContent = query ? `${shown.length} из ${allEvents.length}` : allEvents.length;
-    const files = groupBy(shown, e => e.path).sort(([a], [b]) => a.path.localeCompare(b.path));
-    rows('events', files, events => fileRow(events[0].path, 6,
-            `${esc(events[0].path)} <span class="muted">· ${events.length}</span>`)
-        + events.map(e => `<tr>
-        <td><span class="dot ${e.synced ? '' : 'pending'}" title="${e.synced ? 'Есть в календаре' : 'Ещё не записано в календарь'}"></span></td>
-        <td><button class="link" data-path="${esc(e.path)}" data-uid="${esc(e.uid)}" title="Показать, как это выглядит в Google">${esc(e.summary)}</button>${e.kind === 'task' ? ' <span class="tag task">задача</span>' : ''}${e.recurrence ? ` <span class="muted mono">${esc(e.recurrence)}</span>` : ''}
-            ${e.location ? `<div class="muted">${esc(e.location)}</div>` : ''}</td>
-        ${e.kind === 'task'
-            ? `<td class="nowrap" colspan="2">${e.start ? 'срок: ' + esc(day(e.start, e.time_zone)) : '<span class="muted">без срока</span>'}</td>`
-            : `<td class="nowrap">${esc(when(e.start, e.time_zone))}</td>
-        <td class="nowrap">${esc(when(e.end, e.time_zone))} <span class="muted">${esc(e.time_zone)}</span></td>`}
-        <td class="mono">${esc(e.uid)}</td>
-        <td>${esc((e.kind === 'task' ? tasklistNames : calendarNames)[e.calendar_id] || e.calendar_id)}</td></tr>`).join(''), 6, 'Событий нет');
+    const shown = allEvents.filter(e =>
+        (!query || [e.summary, e.path, e.uid, e.location].join('\n').toLowerCase().includes(query))
+        && (view.kind === 'all' || (view.kind === 'pending' ? !e.synced : (e.kind || 'event') === view.kind))
+        && !(view.hidePast && isPast(e)));
+    $('events-count').textContent = shown.length === allEvents.length ? '' : `показано ${shown.length} из ${allEvents.length}`;
+    setPressed('kind-chips', 'kind', view.kind);
+    setPressed('view-chips', 'view', view.by);
+    $('hide-past').setAttribute('aria-pressed', view.hidePast);
+    if (!shown.length) {
+        $('events').innerHTML = `<div class="muted" style="padding:8px 0">${allEvents.length ? 'Под эти условия ничего не подходит' : 'Событий и задач пока нет'}</div>`;
+    } else if (view.by === 'dates') {
+        // Things without a date (tasks with no due date) go last.
+        const byDate = [...shown].sort((a, b) => (a.start || '9').localeCompare(b.start || '9'));
+        $('events').innerHTML = `<div class="list">${byDate.map(e => eventRow(e, true)).join('')}</div>`;
+    } else {
+        const files = groupBy(shown, e => e.path).sort(([a], [b]) => a.path.localeCompare(b.path));
+        $('events').innerHTML = files.map(events => `
+            <div class="file-head"><span class="mono grow">${esc(events[0].path)} <span class="muted">· ${events.length}</span></span>${syncButton(events[0].path)}</div>
+            <div class="list">${events.map(e => eventRow(e, false)).join('')}</div>`).join('');
+    }
 }
 
 function fileResult(report) {
     if (report.error) return {text: report.error, bad: true};
     const parts = [];
-    if (report.pushed) parts.push(`записано в календарь: ${report.pushed}`);
+    if (report.pushed) parts.push(`записано в Google: ${report.pushed}`);
     if (report.deleted) parts.push(`удалено: ${report.deleted}`);
     if (report.failed) parts.push(`ошибок: ${report.failed}`);
     if (report.held_deletes) parts.push(`удаление ждёт подтверждения: ${report.held_deletes}`);
@@ -392,45 +591,59 @@ async function syncFile(path) {
     setTimeout(() => { if (fileResults[path] === result) { delete fileResults[path]; renderFiles(); } }, 30000);
 }
 
-// Escape a description but keep plain <a href="http(s)://...">text</a> links, as written by the sync, clickable.
-function descriptionHtml(text) {
-    const link = /<a href="([^"]*)">([^<]*)<\/a>/g;
-    let html = '', last = 0, m;
-    while ((m = link.exec(text)) !== null) {
-        html += esc(text.slice(last, m.index));
-        const href = m[1].replaceAll('&amp;', '&');
-        html += /^https?:\/\//i.test(href)
-            ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(m[2])}</a>`
-            : esc(m[0]);
-        last = link.lastIndex;
-    }
-    return html + esc(text.slice(last));
+// ---------- the Google view of one event or task
+
+// What we put at the top of every description: "uid: …", "file: …", maybe "link: …", then "---".
+function splitDescription(text) {
+    text = text || '';
+    const cut = text.indexOf('\n---\n');
+    if (cut < 0 || !text.startsWith('uid: ')) return {head: {}, body: text};
+    const head = Object.fromEntries(text.slice(0, cut).split('\n').map(line => {
+        const colon = line.indexOf(': ');
+        return [line.slice(0, colon), line.slice(colon + 2)];
+    }));
+    return {head, body: text.slice(cut + 5)};
+}
+
+// The file an event came from: a link when we wrote one (an <a> in an event, a bare address in a task).
+function fileLinkHtml(head) {
+    if (!head.link) return esc(head.file || '');
+    const m = /^<a href="([^"]*)">([^<]*)<\/a>$/.exec(head.link);
+    const href = (m ? m[1] : head.link).replaceAll('&amp;', '&');
+    return /^https?:\/\//i.test(href)
+        ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(head.file || href)}</a>`
+        : esc(head.file || '');
 }
 
 function googleTime(t) {
     if (!t) return '';
-    return t.date ? esc(t.date) : `${esc(when(t.dateTime, t.timeZone))} <span class="muted">${esc(t.timeZone)}</span>`;
+    return t.date ? esc(t.date) : `${esc(when(t.dateTime, t.timeZone))} <span class="muted small">${esc(t.timeZone)}</span>`;
+}
+
+function fieldsHtml(fields) {
+    return fields.filter(([, value]) => value)
+        .map(([label, value]) => `<div class="field"><div>${label}</div><div>${value}</div></div>`).join('');
 }
 
 function googleTaskHtml(task) {
     const statuses = {
         needsAction: '<span class="tag created">не выполнена</span>',
-        completed: '<span class="tag deleted">выполнена</span>',
+        completed: '<span class="tag plain">выполнена</span>',
     };
-    const fields = [
+    const {head, body} = splitDescription(task.notes);
+    return fieldsHtml([
         ['Статус', (task.deleted ? '<span class="tag error">удалена в Google</span>' : statuses[task.status] || esc(task.status))
             + (task.synced ? '' : ' <span class="tag held">последняя запись не подтверждена</span>')],
         ['Список', esc(tasklistNames[task.calendarId] || task.calendarId)],
         // Google keeps only the date of a due time, as midnight UTC.
-        ['Срок', task.due ? esc(day(task.due, 'UTC')) : ''],
+        ['Срок', task.due ? esc(dayOf(task.due, 'UTC')) : ''],
         ['Выполнена', esc(when(task.completed))],
-        ['Заметка', task.notes ? esc(task.notes) : ''],
+        ['Заметка', esc(body)],
+        ['Файл', fileLinkHtml(head)],
         ['Изменено', esc(when(task.updated))],
         ['ID в Google', `<span class="mono">${esc(task.id)}</span>`],
         ['Ссылка', task.webViewLink ? `<a href="${esc(task.webViewLink)}" target="_blank" rel="noopener noreferrer">Открыть в Google Tasks</a>` : ''],
-    ];
-    return fields.filter(([, value]) => value)
-        .map(([label, value]) => `<div class="field"><div>${label}</div><div>${value}</div></div>`).join('');
+    ]);
 }
 
 function googleEventHtml(ev) {
@@ -440,7 +653,8 @@ function googleEventHtml(ev) {
         tentative: '<span class="tag parse">предварительно</span>',
     };
     const answers = {accepted: 'придёт', declined: 'не придёт', tentative: 'возможно', needsAction: 'не ответил'};
-    const fields = [
+    const {head, body} = splitDescription(ev.description);
+    return fieldsHtml([
         ['Статус', (statuses[ev.status] || esc(ev.status))
             + (ev.synced ? '' : ' <span class="tag held">последняя запись не подтверждена</span>')],
         ['Календарь', esc(calendarNames[ev.calendarId] || ev.calendarId)],
@@ -448,17 +662,16 @@ function googleEventHtml(ev) {
         ['Конец', googleTime(ev.end)],
         ['Повтор', (ev.recurrence || []).map(esc).join('<br>')],
         ['Место', esc(ev.location)],
-        ['Описание', ev.description ? descriptionHtml(ev.description) : ''],
+        ['Описание', esc(body)],
         ['Участники', ev.attendees?.length
             ? `<ul>${ev.attendees.map(a => `<li>${esc(a.email)} <span class="muted">${esc(answers[a.responseStatus] || '')}</span></li>`).join('')}</ul>`
             : ''],
+        ['Файл', fileLinkHtml(head)],
         ['Создано', esc(when(ev.created))],
         ['Изменено', esc(when(ev.updated))],
         ['ID в Google', `<span class="mono">${esc(ev.id)}</span>`],
         ['Ссылка', ev.htmlLink ? `<a href="${esc(ev.htmlLink)}" target="_blank" rel="noopener noreferrer">Открыть в Google Calendar</a>` : ''],
-    ];
-    return fields.filter(([, value]) => value)
-        .map(([label, value]) => `<div class="field"><div>${label}</div><div>${value}</div></div>`).join('');
+    ]);
 }
 
 async function openGoogleModal(path, uid) {
@@ -466,6 +679,7 @@ async function openGoogleModal(path, uid) {
     $('google-modal-note').textContent = '';
     $('google-modal-body').innerHTML = '';
     $('google-modal').classList.remove('hidden');
+    $('google-modal-close').focus();
     try {
         const ev = await api('/api/events/google?' + new URLSearchParams({path, uid}));
         const isTask = ev.kind === 'task';
@@ -475,49 +689,30 @@ async function openGoogleModal(path, uid) {
         $('google-modal-body').innerHTML = isTask ? googleTaskHtml(ev) : googleEventHtml(ev);
     } catch (e) {
         $('google-modal-title').textContent = 'Не удалось показать';
-        $('google-modal-body').innerHTML = `<div class="field"><div>Причина</div><div>${esc(e.message)}</div></div>`;
+        $('google-modal-body').innerHTML = fieldsHtml([['Причина', esc(e.message)]]);
     }
 }
 
 function closeGoogleModal() { $('google-modal').classList.add('hidden'); }
 
-const LISTING_STATES = {
-    running: ['читается', 'parse'], queued: ['в очереди', 'deleted'],
-    done: ['прочитано', 'created'], unchanged: ['без изменений', 'deleted'],
-};
-
-function renderListing(l) {
-    $('listing-section').classList.toggle('hidden', !l);
-    if (!l) return;
-    const pace = l.pauseSec ? `сервер отвечает медленно: по одному запросу с паузой ${l.pauseSec} с`
-        : `одновременных запросов: ${l.concurrency} из ${l.maxConcurrency}`;
-    // One quiet line; the details are inside the collapsed section.
-    $('listing-summary').textContent = l.active
-        ? `— идёт: прочитано папок ${l.read}, в очереди ${l.waiting}`
-        : `— папок прочитано ${l.read}, без изменений ${l.unchanged}`;
-    $('listing-current').textContent = `Файлов найдено: ${l.files} · ${pace}`
-        + (l.current.length ? ' · сейчас читается: ' + l.current.join(', ') : '');
-    rows('listing', l.groups, g => `<tr>
-        <td class="mono">${esc(g.folder)}</td>
-        <td class="nowrap"><span class="tag ${LISTING_STATES[g.state][1]}">${LISTING_STATES[g.state][0]}</span></td>
-        <td>${g.read}</td><td>${g.unchanged}</td><td>${g.waiting || ''}</td><td>${g.files}</td></tr>`, 6, 'Пока пусто');
-}
+// ---------- loading
 
 async function refreshData() {
     const [events, issues, journal, cycles, listing] = await Promise.all(
         ['/api/events', '/api/issues', '/api/journal', '/api/cycles', '/api/listing'].map(p => api(p)));
     allEvents = events;
     allIssues = issues;
+    allJournal = journal;
     renderFiles();
+    renderJournal();
     renderListing(listing);
-    rows('journal', journal, j => `<tr>
-        <td class="nowrap">${esc(when(j.at))}</td>
-        <td><span class="tag ${esc(j.action)}">${esc(ACTIONS[j.action] || j.action)}</span></td>
-        <td class="mono">${esc(j.path)}</td><td class="mono">${esc(j.uid)}</td><td>${esc(j.detail)}</td></tr>`, 5, 'Пока пусто');
-    rows('cycles', cycles, c => `<tr>
+    // The tiles count events and tasks from the list that has just arrived.
+    if (lastStatus) renderStatus(lastStatus);
+    $('cycles').innerHTML = cycles.length ? cycles.map(c => `<tr>
         <td class="nowrap">${esc(when(c.at))}</td><td>${c.listed}</td><td>${c.read}${c.read_failed ? ` (не прочитано ${c.read_failed})` : ''}</td>
         <td>${c.pushed}</td><td>${c.deleted}${c.held_deletes ? ` (отложено ${c.held_deletes})` : ''}</td><td>${c.failed}</td>
-        <td>${c.error ? `<span class="tag error">${esc(c.error)}</span>` : 'выполнен'}</td></tr>`, 7, 'Пока пусто');
+        <td>${c.error ? `<span class="tag error" style="white-space:normal">${esc(c.error)}</span>` : 'выполнен'}</td></tr>`).join('')
+        : '<tr><td colspan="7" class="muted">Пока пусто</td></tr>';
 }
 
 async function refreshStatus() {
@@ -534,26 +729,34 @@ async function refreshStatus() {
             await refreshData();
         } else if (busy !== wasBusy) renderFiles();
     } catch (e) {
-        $('status').className = 'error';
+        $('status').className = 'card error';
         $('headline').textContent = 'Нет связи с сервисом';
-        $('status-line').textContent = String(e.message || e);
+        $('status-error').classList.remove('hidden');
+        $('status-error').textContent = String(e.message || e);
     }
+}
+
+function idList(title, items, empty) {
+    return `<div class="muted small">${title}</div>` + (items.length ? items.map(([name, id, note]) => `<div class="idrow">
+        <b>${esc(name)}</b>${note ? ` <span class="tag plain">${note}</span>` : ''} <span class="mono muted grow">${esc(id)}</span>
+        <button class="quiet copy" data-copy="${esc(id)}" title="Скопировать идентификатор">Копировать</button></div>`).join('')
+        : `<div class="muted">${empty}</div>`);
 }
 
 async function loadCalendars() {
     try {
         const calendars = await api('/api/calendars');
         calendarNames = Object.fromEntries(calendars.map(c => [c.id, c.summary]));
-        $('calendars').innerHTML = 'Доступные календари:' + calendars.map(c =>
-            `<div><b>${esc(c.summary)}</b> <span class="mono">${esc(c.id)}</span></div>`).join('');
+        $('calendars').innerHTML = idList('Календари — идентификатор пишется в calendar_id события',
+            calendars.map(c => [c.summary, c.id, c.primary ? 'основной' : '']), 'Календарей нет');
         renderEvents();
-    } catch (e) { $('calendars').textContent = `Список календарей недоступен: ${e.message}`; }
+    } catch (e) { $('calendars').innerHTML = `<span class="muted">Список календарей недоступен: ${esc(e.message)}</span>`; }
 }
 
 async function loadTasklists(defaultTasklist) {
     if (!tasksAllowed) {
-        $('tasklists').textContent = 'Задачи (<task>) пока не синхронизируются: войдите в Google заново, '
-            + 'чтобы дать доступ к Google Tasks.';
+        $('tasklists').innerHTML = '<span class="notice warn" style="display:block;margin:0">Задачи (&lt;task&gt;) пока не '
+            + 'синхронизируются: нажмите «Войти заново» и разрешите доступ к Google Tasks.</span>';
         return;
     }
     try {
@@ -561,27 +764,68 @@ async function loadTasklists(defaultTasklist) {
         tasklistNames = Object.fromEntries(lists.map(l => [l.id, l.title]));
         // "@default" is how the main list is named in the settings.
         if (lists.length && !tasklistNames[defaultTasklist]) tasklistNames[defaultTasklist] = lists[0].title;
-        $('tasklists').innerHTML = 'Списки задач:' + lists.map(l =>
-            `<div><b>${esc(l.title)}</b> <span class="mono">${esc(l.id)}</span></div>`).join('');
+        $('tasklists').innerHTML = idList('Списки задач — идентификатор пишется в tasklist задачи',
+            lists.map((l, i) => [l.title, l.id, i === 0 ? 'основной' : '']), 'Списков задач нет');
         renderEvents();
-    } catch (e) { $('tasklists').textContent = `Списки задач недоступны: ${e.message}`; }
+    } catch (e) { $('tasklists').innerHTML = `<span class="muted">Списки задач недоступны: ${esc(e.message)}</span>`; }
 }
 
+// ---------- tabs
+
+function showTab(name) {
+    view.tab = ['overview', 'events', 'journal', 'google'].includes(name) ? name : 'overview';
+    for (const button of $('tabs').querySelectorAll('[data-tab]')) {
+        const selected = button.dataset.tab === view.tab;
+        button.setAttribute('aria-selected', selected);
+        $('tab-' + button.dataset.tab).classList.toggle('hidden', !selected);
+    }
+    // Kept in the address, so that a reload or a bookmark returns to the same tab. The slash keeps
+    // the browser from taking the name for an element to scroll to.
+    if (location.hash !== '#/' + view.tab) history.replaceState(null, '', '#/' + view.tab);
+}
+
+// ---------- events of the page
+
+$('tabs').addEventListener('click', event => {
+    const button = event.target.closest('[data-tab]');
+    if (button) showTab(button.dataset.tab);
+});
+document.addEventListener('click', event => {
+    const go = event.target.closest('[data-go]');
+    if (go) { showTab(go.dataset.go); window.scrollTo({top: 0}); }
+    const sync = event.target.closest('button.sync-file');
+    if (sync && !sync.disabled) syncFile(sync.dataset.path);
+    const link = event.target.closest('button.link');
+    if (link) openGoogleModal(link.dataset.path, link.dataset.uid);
+    const copy = event.target.closest('button.copy');
+    if (copy) {
+        navigator.clipboard?.writeText(copy.dataset.copy).then(() => {
+            copy.textContent = 'Скопировано';
+            setTimeout(() => { copy.textContent = 'Копировать'; }, 1500);
+        });
+    }
+});
 $('sync-now').addEventListener('click', async () => { await api('/api/sync', {method: 'POST'}); refreshStatus(); });
 $('filter').addEventListener('input', renderEvents);
-$('events').addEventListener('click', event => {
-    const button = event.target.closest('button.link');
-    if (button) openGoogleModal(button.dataset.path, button.dataset.uid);
+$('kind-chips').addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    if (button.id === 'hide-past') view.hidePast = !view.hidePast;
+    else view.kind = button.dataset.kind;
+    renderEvents();
 });
-for (const table of ['events', 'issues']) {
-    $(table).addEventListener('click', event => {
-        const button = event.target.closest('button.sync-file');
-        if (button && !button.disabled) syncFile(button.dataset.path);
-    });
-}
+$('view-chips').addEventListener('click', event => {
+    const button = event.target.closest('[data-view]');
+    if (button) { view.by = button.dataset.view; renderEvents(); }
+});
+$('journal-chips').addEventListener('click', event => {
+    const button = event.target.closest('[data-journal]');
+    if (button) { view.journal = button.dataset.journal; renderJournal(); }
+});
 $('google-modal-close').addEventListener('click', closeGoogleModal);
 $('google-modal').addEventListener('click', event => { if (event.target === event.currentTarget) closeGoogleModal(); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeGoogleModal(); });
+window.addEventListener('hashchange', () => showTab(location.hash.slice(2)));
 $('google-logout').addEventListener('click', async () => { await api('/api/google/logout', {method: 'POST'}); refreshStatus(); });
 $('approve-deletions').addEventListener('click', async event => {
     const button = event.currentTarget;
@@ -597,7 +841,12 @@ $('approve-deletions').addEventListener('click', async event => {
     refreshStatus();
 });
 
-api('/api/config').then(c => { $('config').textContent = JSON.stringify(c, null, 2); });
+showTab(location.hash.slice(2));
+api('/api/config').then(c => {
+    defaultTimeZone = c.time_zone;
+    $('config').textContent = JSON.stringify(c, null, 2);
+    renderEvents();
+});
 loadCalendars();
 refreshStatus();
 setInterval(refreshStatus, 3000);
