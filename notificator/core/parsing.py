@@ -36,9 +36,6 @@ _SCALAR_FIELDS = (
     "uid", "summary", "start", "end", "description",
     "time_zone", "location", "recurrence", "calendar_id", "due", "tasklist",
 )
-# What a task cannot have, and what an event cannot.
-_EVENT_ONLY_FIELDS = ("start", "end", "location", "recurrence", "attendees", "calendar_id")
-_TASK_ONLY_FIELDS = ("due", "tasklist")
 # A table is an events table when its header has these columns and one of the date columns.
 _CSV_REQUIRED = ("uid", "summary")
 _CSV_DATE_COLUMNS = ("start", "due")
@@ -257,9 +254,10 @@ _BINARY_PARSERS_BY_SUFFIX = {".xlsx": parse_xlsx}
 def build_event(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpec:
     """Validate raw field values and build an EventSpec. Empty optional fields count as absent."""
     uid, summary, tz = _common_fields(fields, ctx)
-    for name in _TASK_ONLY_FIELDS:
-        if fields.get(name):
-            raise EventError(f"у события не может быть {name}: это поле задачи (<task>)")
+    # `start` and `due` say what a thing is, so mixing them up is an error. Other
+    # fields that only a task has are ignored, like any field we have no use for.
+    if fields.get("due"):
+        raise EventError("у события не может быть due: это срок задачи, время события задаётся в start")
 
     start_text = _scalar(fields, "start")
     if not start_text:
@@ -286,12 +284,13 @@ def build_event(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpe
 
 
 def build_task(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpec:
-    """Validate raw field values and build the EventSpec of a task. Its due date is optional."""
+    """Validate raw field values and build the EventSpec of a task. Its due date is optional.
+
+    Fields that only an event has (location, attendees and so on) are ignored.
+    """
     uid, summary, tz = _common_fields(fields, ctx)
-    for name in _EVENT_ONLY_FIELDS:
-        if fields.get(name):
-            hint = "срок задаётся в due" if name in ("start", "end") else "это поле события"
-            raise EventError(f"у задачи не может быть {name}: {hint}")
+    if fields.get("start"):
+        raise EventError("у задачи не может быть start: это время события, срок задачи задаётся в due")
     due_text = _scalar(fields, "due")
     # Google Tasks keeps only the date of a due time.
     due = _parse_datetime(due_text, "due", tz, ctx).date() if due_text else None

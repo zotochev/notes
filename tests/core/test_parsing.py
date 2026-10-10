@@ -405,24 +405,29 @@ def test_event_stays_the_default_and_blocks_of_both_kinds_are_read_from_one_text
     assert result.issues == ()
 
 
-@pytest.mark.parametrize("field, value", [
-    ("start", "2026-10-15"), ("end", "2026-10-16"), ("location", "Room"), ("recurrence", "RRULE:FREQ=DAILY"),
-    ("attendees", "user@example.com"), ("calendar_id", "primary"),
-])
-def test_task_cannot_have_what_only_an_event_has(field, value):
-    result = parse_text(task_xml(uid="t1", summary="Call", **{field: value}), CTX)
+def test_start_in_a_task_and_due_in_an_event_are_errors():
+    task = parse_text(task_xml(uid="t1", summary="Call", start="2026-10-15"), CTX)
+    event = parse_text(event_xml(uid="u1", summary="Meeting", start="2026-10-15", due="2026-10-16"), CTX)
 
-    assert result.events == ()
-    assert f"у задачи не может быть {field}" in result.issues[0].message
-    assert result.broken_uids == {"t1"}
+    assert (task.events, event.events) == ((), ())
+    assert "у задачи не может быть start" in task.issues[0].message
+    assert "у события не может быть due" in event.issues[0].message
+    assert (task.broken_uids, event.broken_uids) == ({"t1"}, {"u1"})
 
 
-@pytest.mark.parametrize("field", ["due", "tasklist"])
-def test_event_cannot_have_what_only_a_task_has(field):
-    result = parse_text(event_xml(uid="u1", summary="Meeting", start="2026-10-15", **{field: "2026-10-16"}), CTX)
+def test_fields_of_the_other_kind_are_ignored():
+    task_text = task_xml(
+        uid="t1", summary="Call", due="2026-10-15", end="2026-10-16", location="Room",
+        recurrence="not even a rule", attendees="not an email", calendar_id="primary",
+    )
+    event_text = event_xml(uid="u1", summary="Meeting", start="2026-10-15 15:00", tasklist="work")
 
-    assert result.events == ()
-    assert f"у события не может быть {field}" in result.issues[0].message
+    (task,), (event,) = parse_text(task_text, CTX).events, parse_text(event_text, CTX).events
+
+    assert (task.kind, task.calendar_id, task.location, task.attendees, task.recurrence, task.end) == (
+        "task", None, None, (), None, None,
+    )
+    assert (event.kind, event.calendar_id) == ("event", None)
 
 
 def test_task_and_event_cannot_share_a_uid():
@@ -436,16 +441,19 @@ def test_task_and_event_cannot_share_a_uid():
 
 def test_table_row_with_due_instead_of_start_is_a_task():
     text = (
-        "uid,summary,start,due,tasklist,location\n"
-        "u1,Meeting,2026-10-15 15:00,,,Room\n"
-        "t1,Call the bank,,2026-10-16,work,\n"
-        "x1,Both,2026-10-15,2026-10-16,,\n"
-        "x2,Neither,,,,\n"
+        "uid,summary,start,due,tasklist,location,calendar_id\n"
+        "u1,Meeting,2026-10-15 15:00,,work,Room,cal1\n"
+        "t1,Call the bank,,2026-10-16,work,Room,cal1\n"
+        "x1,Both,2026-10-15,2026-10-16,,,\n"
+        "x2,Neither,,,,,\n"
     )
 
     result = parse_csv(text, CTX)
 
-    assert [(e.uid, e.kind, e.calendar_id) for e in result.events] == [("u1", "event", None), ("t1", "task", "work")]
+    # Each row takes the columns of its own kind and ignores the rest.
+    assert [(e.uid, e.kind, e.calendar_id, e.location) for e in result.events] == [
+        ("u1", "event", "cal1", "Room"), ("t1", "task", "work", None),
+    ]
     assert [i.message for i in result.issues] == [
         "строка 4: заполнены и start, и due: у события задаётся start, у задачи — due",
         "строка 5: не задан start",
