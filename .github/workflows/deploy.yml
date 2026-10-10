@@ -35,8 +35,9 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           install -m 600 /dev/null ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # A secret pasted from Windows may carry CR line ends, which ssh does not accept in a key.
+          printf '%s\n' "$DEPLOY_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
           ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" "
               set -e
