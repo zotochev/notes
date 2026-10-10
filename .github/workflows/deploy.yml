@@ -1,15 +1,14 @@
 name: deploy
 
-# Every push to main is tested; only a version tag (v1.2.3) is deployed.
+# A version tag (v1.2.3) is tested and, if the tests pass, deployed. Other pushes do nothing.
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -21,8 +20,7 @@ jobs:
 
   deploy:
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # One deploy at a time; a newer one waits for the running one.
     concurrency: deploy
     steps:
