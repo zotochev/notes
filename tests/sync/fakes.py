@@ -103,6 +103,7 @@ class FakeTasks:
     """Google Tasks: the service chooses the ids, and an update changes only the fields it is given."""
 
     def __init__(self) -> None:
+        self.lists = {"@default", "work"}
         # (tasklist, task_id) -> task
         self.tasks: dict[tuple[str, str], dict[str, Any]] = {}
         self.deleted: set[tuple[str, str]] = set()
@@ -117,6 +118,8 @@ class FakeTasks:
 
     def insert(self, tasklist: str, body: dict[str, Any]) -> str:
         self._before("insert")
+        if tasklist not in self.lists:
+            raise CalendarError(f"список задач {tasklist!r} не найден")
         task_id = f"task{len(self.tasks) + len(self.deleted) + 1}"
         self.tasks[(tasklist, task_id)] = {"status": "needsAction", **body}
         if self.lose_next_insert_response:

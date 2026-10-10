@@ -197,3 +197,27 @@ def test_moved_task_keeps_its_google_task(world):
     assert list(world.tasks.tasks) == [key]
     assert world.tasks.tasks[key]["notes"].startswith("uid: t1\nfile: /lib/a.md\n")
     assert world.store.tracked("new")["/lib/a.md"]["t1"].key == EventKey("new", "/lib/a.md", "t1")
+
+
+def test_task_sent_to_a_list_that_does_not_exist_is_reported_and_works_once_the_list_is_fixed(world):
+    world.source.files["/a.md"] = task("t1", "Call the bank", tasklist="typo")
+
+    first, second = world.sync(), world.sync()
+
+    assert (first.failed, second.failed) == (1, 1)
+    assert "список задач 'typo' не найден" in world.store.issues()[0].message
+
+    world.source.files["/a.md"] = task("t1", "Call the bank")
+    report = world.sync()
+
+    assert (report.failed, world.tasks.titles("@default"), world.store.issues()) == (0, ["Call the bank"], [])
+
+
+def test_task_that_never_reached_a_missing_list_can_be_removed_from_the_file(world):
+    world.source.files["/a.md"] = task("t1", "Call the bank", tasklist="typo")
+    world.sync()
+    world.source.files["/a.md"] = "# the task is commented out"
+
+    report = world.sync()
+
+    assert (report.failed, world.store.events("cloud"), world.store.issues()) == (0, [], [])

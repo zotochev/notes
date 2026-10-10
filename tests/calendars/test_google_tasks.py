@@ -24,9 +24,15 @@ def test_insert_returns_the_id_google_chose():
 def test_insert_into_a_missing_list_names_the_list():
     service, _ = tasks(error(404))
 
-    with pytest.raises(CalendarError, match="список задач work не найден") as raised:
+    with pytest.raises(CalendarError, match="список задач 'work' не найден.*идентификатор") as raised:
         service.insert("work", BODY)
     assert not isinstance(raised.value, EventNotFound)
+
+
+def test_missing_list_holds_no_tasks():
+    service, _ = tasks(error(404, message="Task list not found"))
+
+    assert service.find("no-such-list", "uid: t1\nfile: /a.md\n") is None
 
 
 def test_update_patches_only_what_we_set():

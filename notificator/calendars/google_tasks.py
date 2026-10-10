@@ -26,7 +26,7 @@ class GoogleTasks:
             return self._execute(self._service.tasks().insert(tasklist=tasklist, body=body))["id"]
         except EventNotFound as e:
             # A new task cannot be "not found": it is the list that is missing.
-            raise CalendarError(f"список задач {tasklist} не найден или недоступен этому аккаунту") from e
+            raise _no_such_list(tasklist) from e
 
     def update(self, tasklist: str, task_id: str, body: dict[str, Any]) -> None:
         """Change what we set and leave the rest, such as "completed", as it is. Raises EventNotFound."""
@@ -46,12 +46,18 @@ class GoogleTasks:
         return self._execute(self._service.tasks().get(tasklist=tasklist, task=task_id))
 
     def find(self, tasklist: str, marker: str) -> str | None:
-        """The id of a task in the list whose notes begin with `marker`, completed ones included."""
+        """The id of a task in the list whose notes begin with `marker`, completed ones included.
+
+        A list that does not exist holds no tasks: the answer is None, not an error.
+        """
         page_token = None
         while True:
-            page = self._execute(self._service.tasks().list(
-                tasklist=tasklist, pageToken=page_token, maxResults=100, showCompleted=True, showHidden=True,
-            ))
+            try:
+                page = self._execute(self._service.tasks().list(
+                    tasklist=tasklist, pageToken=page_token, maxResults=100, showCompleted=True, showHidden=True,
+                ))
+            except EventNotFound:
+                return None
             for task in page.get("items", []):
                 if (task.get("notes") or "").startswith(marker) and not task.get("deleted"):
                     return task["id"]
@@ -83,3 +89,10 @@ class GoogleTasks:
                     f"и войдите в Google заново через админку ({e})"
                 ) from e
             raise
+
+
+def _no_such_list(tasklist: str) -> CalendarError:
+    return CalendarError(
+        f"список задач {tasklist!r} не найден или недоступен этому аккаунту: "
+        "в tasklist пишется идентификатор списка из раздела «Google» в админке, а не его название"
+    )
