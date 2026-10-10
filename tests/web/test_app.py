@@ -296,3 +296,12 @@ def test_validate_reports_tasks(world):
     (shown,) = world.client.post("/api/validate", json={"text": text}).json()["events"]
 
     assert (shown["kind"], shown["start"], shown["end"]) == ("task", None, None)
+
+
+def test_refused_or_incomplete_google_answer_is_explained(world):
+    refused = world.client.get("/google/oauth/callback?error=access_denied&state=x", follow_redirects=False)
+    bare = world.client.get("/google/oauth/callback", follow_redirects=False)
+
+    assert (refused.status_code, bare.status_code) == (400, 400)
+    assert "Google не выдал доступ: access_denied" in refused.json()["detail"]
+    assert "нет кода входа" in bare.json()["detail"]

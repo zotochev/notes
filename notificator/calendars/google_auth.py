@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from google.auth.exceptions import GoogleAuthError, RefreshError
@@ -13,6 +14,10 @@ from google_auth_oauthlib.flow import Flow
 from notificator.sync.ports import CalendarUnavailable
 
 logger = logging.getLogger(__name__)
+
+# Google may grant other scopes than were asked for: fewer when the user unticks one on the consent
+# screen, more with include_granted_scopes. Without this oauthlib refuses the token altogether.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
 SCOPES = ["https://www.googleapis.com/auth/calendar", TASKS_SCOPE]

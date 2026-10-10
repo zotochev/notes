@@ -216,7 +216,13 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.get("/google/oauth/callback", include_in_schema=False)
-    def google_callback(state: str, code: str) -> RedirectResponse:
+    def google_callback(
+        state: str | None = None, code: str | None = None, error: str | None = None
+    ) -> RedirectResponse:
+        if error or not state or not code:
+            # Google comes back without a code when access was refused or the sign-in was cancelled.
+            reason = f"Google не выдал доступ: {error}" if error else "в ответе Google нет кода входа"
+            raise HTTPException(status_code=400, detail=f"{reason}. Начните вход заново из админки")
         try:
             auth.finish_sign_in(state, code)
         except CalendarError as e:
