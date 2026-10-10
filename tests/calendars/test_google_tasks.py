@@ -1,7 +1,7 @@
 import pytest
 
 from notificator.calendars.google_tasks import GoogleTasks
-from notificator.sync.ports import CalendarError, CalendarUnavailable, EventNotFound
+from notificator.sync.ports import CalendarError, CalendarUnavailable, EventNotFound, TaskListNotFound
 from tests.calendars.test_google import FakeHttp, error
 
 BODY = {"title": "Call the bank", "notes": "uid: t1\nfile: /a.md\n---\n", "due": None}
@@ -24,15 +24,15 @@ def test_insert_returns_the_id_google_chose():
 def test_insert_into_a_missing_list_names_the_list():
     service, _ = tasks(error(404))
 
-    with pytest.raises(CalendarError, match="список задач 'work' не найден.*идентификатор") as raised:
+    with pytest.raises(TaskListNotFound, match="список задач 'work' не найден.*идентификатор"):
         service.insert("work", BODY)
-    assert not isinstance(raised.value, EventNotFound)
 
 
-def test_missing_list_holds_no_tasks():
+def test_looking_for_a_task_in_a_missing_list_names_the_list_too():
     service, _ = tasks(error(404, message="Task list not found"))
 
-    assert service.find("no-such-list", "uid: t1\nfile: /a.md\n") is None
+    with pytest.raises(TaskListNotFound, match="список задач 'no-such-list' не найден"):
+        service.find("no-such-list", "uid: t1\nfile: /a.md\n")
 
 
 def test_update_patches_only_what_we_set():

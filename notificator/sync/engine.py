@@ -24,7 +24,8 @@ from notificator.core.planning import (
 from notificator.core.rendering import task_marker
 from notificator.store import Store
 from notificator.sync.ports import (
-    Calendar, CalendarError, CalendarUnavailable, EventAlreadyExists, EventNotFound, Source, SourceError, Tasks,
+    Calendar, CalendarError, CalendarUnavailable, EventAlreadyExists, EventNotFound, Source, SourceError,
+    TaskListNotFound, Tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -412,10 +413,17 @@ class SyncEngine:
     def _delete(self, event: TrackedEvent) -> None:
         if event.kind == TASK:
             tasks = self._tasks_service()
-            # Without an id the task may or may not have been created: look for it.
-            task_id = event.gcal_event_id or tasks.find(
-                event.calendar_id, task_marker(event.key.uid, event.key.path)
-            )
+            try:
+                # Without an id the task may or may not have been created: look for it.
+                task_id = event.gcal_event_id or tasks.find(
+                    event.calendar_id, task_marker(event.key.uid, event.key.path)
+                )
+            except TaskListNotFound as e:
+                # The task was sent to a list that does not exist, so it was never created and there
+                # is nothing to delete. Failing here would keep the file stuck after it was corrected;
+                # the journal still says what went wrong.
+                self._store.log(event.key, "error", f"{e}. Задача туда не попала, запись о ней убрана")
+                task_id = None
             if task_id:
                 tasks.delete(event.calendar_id, task_id)
         else:

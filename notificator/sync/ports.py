@@ -28,6 +28,10 @@ class EventAlreadyExists(CalendarError):
     """An event with this id already exists, possibly as a deleted one."""
 
 
+class TaskListNotFound(CalendarError):
+    """The task list a task was sent to does not exist, or this account cannot see it."""
+
+
 class CalendarUnavailable(CalendarError):
     """The calendar cannot be used at all right now (not authorised, no network)."""
 
@@ -58,7 +62,7 @@ class Tasks(Protocol):
     """Google Tasks. Unlike a calendar event, a task gets its id from the service."""
 
     def insert(self, tasklist: str, body: dict[str, Any]) -> str:
-        """Create a task and return its id."""
+        """Create a task and return its id. Raises TaskListNotFound."""
         ...
 
     def update(self, tasklist: str, task_id: str, body: dict[str, Any]) -> None:
@@ -70,7 +74,7 @@ class Tasks(Protocol):
         ...
 
     def find(self, tasklist: str, marker: str) -> str | None:
-        """Return the id of the task whose notes begin with `marker`, or None."""
+        """Return the id of the task whose notes begin with `marker`, or None. Raises TaskListNotFound."""
         ...
 
 

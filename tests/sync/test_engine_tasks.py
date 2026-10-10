@@ -211,6 +211,11 @@ def test_task_sent_to_a_list_that_does_not_exist_is_reported_and_works_once_the_
     report = world.sync()
 
     assert (report.failed, world.tasks.titles("@default"), world.store.issues()) == (0, ["Call the bank"], [])
+    # The record of the write that never happened is dropped, but not silently.
+    assert any(
+        e.action == "error" and "список задач 'typo' не найден" in e.detail and "запись о ней убрана" in e.detail
+        for e in world.store.journal()
+    )
 
 
 def test_task_that_never_reached_a_missing_list_can_be_removed_from_the_file(world):
@@ -221,3 +226,4 @@ def test_task_that_never_reached_a_missing_list_can_be_removed_from_the_file(wor
     report = world.sync()
 
     assert (report.failed, world.store.events("cloud"), world.store.issues()) == (0, [], [])
+    assert [e.action for e in world.store.journal()][:2] == ["deleted", "error"]

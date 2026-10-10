@@ -4,7 +4,9 @@ from __future__ import annotations
 from typing import Any
 
 from notificator.core.model import RemoteFile
-from notificator.sync.ports import CalendarError, EventAlreadyExists, EventNotFound, SourceError
+from notificator.sync.ports import (
+    CalendarError, EventAlreadyExists, EventNotFound, SourceError, TaskListNotFound,
+)
 
 
 class FakeSource:
@@ -119,7 +121,7 @@ class FakeTasks:
     def insert(self, tasklist: str, body: dict[str, Any]) -> str:
         self._before("insert")
         if tasklist not in self.lists:
-            raise CalendarError(f"список задач {tasklist!r} не найден")
+            raise TaskListNotFound(f"список задач {tasklist!r} не найден")
         task_id = f"task{len(self.tasks) + len(self.deleted) + 1}"
         self.tasks[(tasklist, task_id)] = {"status": "needsAction", **body}
         if self.lose_next_insert_response:
@@ -140,6 +142,8 @@ class FakeTasks:
 
     def find(self, tasklist: str, marker: str) -> str | None:
         self.calls.append("find")
+        if tasklist not in self.lists:
+            raise TaskListNotFound(f"список задач {tasklist!r} не найден")
         return next(
             (task_id for (lst, task_id), t in self.tasks.items() if lst == tasklist and t["notes"].startswith(marker)),
             None,

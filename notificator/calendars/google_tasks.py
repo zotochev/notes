@@ -11,7 +11,7 @@ from typing import Any
 from googleapiclient.discovery import build
 
 from notificator.calendars.google import execute
-from notificator.sync.ports import CalendarError, CalendarUnavailable, EventNotFound
+from notificator.sync.ports import CalendarError, CalendarUnavailable, EventNotFound, TaskListNotFound
 
 
 class GoogleTasks:
@@ -46,18 +46,15 @@ class GoogleTasks:
         return self._execute(self._service.tasks().get(tasklist=tasklist, task=task_id))
 
     def find(self, tasklist: str, marker: str) -> str | None:
-        """The id of a task in the list whose notes begin with `marker`, completed ones included.
-
-        A list that does not exist holds no tasks: the answer is None, not an error.
-        """
+        """The id of a task in the list whose notes begin with `marker`, completed ones included."""
         page_token = None
         while True:
             try:
                 page = self._execute(self._service.tasks().list(
                     tasklist=tasklist, pageToken=page_token, maxResults=100, showCompleted=True, showHidden=True,
                 ))
-            except EventNotFound:
-                return None
+            except EventNotFound as e:
+                raise _no_such_list(tasklist) from e
             for task in page.get("items", []):
                 if (task.get("notes") or "").startswith(marker) and not task.get("deleted"):
                     return task["id"]
@@ -91,8 +88,8 @@ class GoogleTasks:
             raise
 
 
-def _no_such_list(tasklist: str) -> CalendarError:
-    return CalendarError(
+def _no_such_list(tasklist: str) -> TaskListNotFound:
+    return TaskListNotFound(
         f"список задач {tasklist!r} не найден или недоступен этому аккаунту: "
         "в tasklist пишется идентификатор списка из раздела «Google» в админке, а не его название"
     )
