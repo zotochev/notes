@@ -475,3 +475,31 @@ def test_xlsx_sheet_of_tasks_is_read_too():
     (task,) = parse_file("/tasks.xlsx", data, CTX).events
 
     assert (task.kind, task.start) == ("task", datetime(2026, 10, 16, tzinfo=TZ))
+
+
+COMMENTED_TASK = "#<task>\n  <uid>cnh</uid>\n  <summary>Call the bank</summary>\n  <due>2026-11-15</due>\n</task>\n"
+
+
+@pytest.mark.parametrize("before", [
+    "", "\ufeff", "\u200b", "  \t", "- ", "> ", "some text ", "# ", "\ufeff  ",
+], ids=["nothing", "byte order mark", "zero-width space", "indent", "list item", "quote", "text", "second hash",
+        "mark and indent"])
+def test_block_whose_opening_tag_is_commented_out_is_not_there(before):
+    live = task_xml(uid="live", summary="Stays")
+
+    result = parse_text(before + COMMENTED_TASK + live, CTX)
+
+    assert ([e.uid for e in result.events], result.issues) == (["live"], ())
+    assert result.confirms_absent("cnh")
+
+
+def test_hash_with_a_space_before_the_tag_comments_the_block_out_too():
+    result = parse_text("Later: # <event><uid>u1</uid><summary>M</summary><start>2026-10-15</start></event>", CTX)
+
+    assert (result.events, result.issues) == ((), ())
+
+
+def test_hash_elsewhere_on_the_line_does_not_comment_the_block_out():
+    text = "Issue #12: " + event_xml(uid="u1", summary="Meeting #3", start="2026-10-15 15:00")
+
+    assert [e.summary for e in parse_text(text, CTX).events] == ["Meeting #3"]

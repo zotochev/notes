@@ -30,6 +30,9 @@ MAX_FRAGMENT_BYTES = 512_000
 
 # An <event> or <task> block that has no other such block inside it.
 _BLOCK_RE = re.compile(r"(?s)<(event|task)\b[^>]*>(?:(?!<(?:event|task)\b).)*?</\1>")
+# What may stand before the `#` of a comment line without being seen: spaces, a byte order
+# mark (the first line of a file saved by some editors has one) and zero-width characters.
+_INVISIBLE_AND_SPACE = " \t\r\xa0\ufeff\u200b\u200c\u200d\u2060"
 _UID_RE = re.compile(r"^[A-Za-z0-9]+$")
 _UID_IN_FRAGMENT_RE = re.compile(r"<uid>\s*([A-Za-z0-9]+)\s*</uid>")
 _SCALAR_FIELDS = (
@@ -105,9 +108,16 @@ def parse_file(path: str, content: str | bytes, ctx: ParseContext) -> ParseResul
 def parse_text(
     text: str, ctx: ParseContext, max_fragment_bytes: int = MAX_FRAGMENT_BYTES
 ) -> ParseResult:
-    """Extract `<event>` and `<task>` blocks from arbitrary text. Lines starting with `#` are ignored."""
+    """Extract `<event>` and `<task>` blocks from arbitrary text.
+
+    Lines starting with `#` are ignored, and so is a whole block whose opening
+    tag has `#` right before it: a commented-out block is a block that is not there.
+    """
     collector = _Collector()
-    for match in _BLOCK_RE.finditer(_strip_comments(text)):
+    text = _strip_comments(text)
+    for match in _BLOCK_RE.finditer(text):
+        if text[:match.start()].rstrip(" \t").endswith("#"):
+            continue
         fragment, kind = match.group(0), match.group(1)
         uid_hint = _uid_hint(fragment)
         if len(fragment.encode("utf-8", errors="ignore")) > max_fragment_bytes:
@@ -360,7 +370,9 @@ class _Collector:
 
 
 def _strip_comments(text: str) -> str:
-    return "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip(_INVISIBLE_AND_SPACE).startswith("#")
+    )
 
 
 def _uid_hint(fragment: str) -> str | None:
