@@ -49,6 +49,12 @@
     tr.file td { background: var(--bg); padding: 6px 10px; }
     button.sync-file { padding: 2px 8px; font-size: 12px; }
     .bad { color: var(--bad); }
+    #stage { margin-top: 6px; }
+    /* What a running sync has not confirmed yet is shown dimmed. */
+    #attention.stale .table-wrap { opacity: .55; }
+    .step { color: var(--muted); }
+    .step.now { color: var(--text); font-weight: 650; }
+    .step.done { color: var(--ok); }
     .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
     .tag.parse, .tag.held { background: var(--warn-bg); color: var(--warn); }
     .tag.sync, .tag.source, .tag.error { background: var(--bad-bg); color: var(--bad); }
@@ -77,17 +83,19 @@
 <main>
     <section id="status" class="starting">
         <div class="row">
-            <h1 class="grow">Notificator</h1>
+            <h1 class="grow">Notificator <span id="version" class="muted" style="font-weight:400"></span></h1>
             <button id="sync-now">Синхронизировать сейчас</button>
         </div>
         <div id="headline">Загрузка…</div>
         <div id="status-line" class="muted"></div>
+        <div id="stage" class="hidden"></div>
         <div id="inactive-sources" class="muted hidden"></div>
         <div id="status-error" class="hidden"></div>
     </section>
 
     <section id="attention" class="hidden">
         <h2>Требует внимания</h2>
+        <div id="stale-note" class="muted hidden" style="margin-bottom:10px">Это итог прошлого цикла. Список обновится, когда закончится идущая сейчас синхронизация.</div>
         <div id="held-banner" class="banner hidden">
             <div class="row">
                 <span class="grow" id="held-text"></span>
@@ -245,6 +253,29 @@ function fileRow(path, colspan, label, canSync = true) {
     </div></td></tr>`;
 }
 
+const STAGES = [['listing', 'Список файлов'], ['reading', 'Чтение файлов'], ['writing', 'Запись в Google']];
+
+function duration(seconds) {
+    return seconds < 60 ? `${seconds} с` : `${Math.floor(seconds / 60)} мин ${seconds % 60} с`;
+}
+
+// The stages of the running sync in one line: the finished ones ticked, the current one with its count.
+function renderStage(stage) {
+    $('stage').classList.toggle('hidden', !stage);
+    if (!stage) return;
+    // One file is not listed: its sync starts with reading it.
+    const stages = stage.file ? STAGES.slice(1) : STAGES;
+    const current = stages.findIndex(([name]) => name === stage.phase);
+    const count = stage.phase === 'listing'
+        ? (stage.done ? `: папок ${stage.done}` + (stage.total > stage.done ? `, в очереди ${stage.total - stage.done}` : '') : '')
+        : (stage.total ? `: ${stage.done} из ${stage.total}` : '');
+    $('stage').innerHTML = stages.map(([, label], i) =>
+        i < current ? `<span class="step done">✓ ${label}</span>`
+        : i === current ? `<span class="step now">${label}${count}</span>`
+        : `<span class="step">${label}</span>`).join('<span class="muted"> → </span>')
+        + ` <span class="muted">· идёт ${duration(stage.seconds)}${stage.file ? ' · ' + esc(stage.file) : ''}</span>`;
+}
+
 function renderStatus(s) {
     const headlines = {
         starting: 'Первая синхронизация ещё не завершилась',
@@ -253,6 +284,7 @@ function renderStatus(s) {
         error: 'Синхронизация остановлена',
     };
     $('status').className = s.state;
+    $('version').textContent = s.version ? `· версия ${s.version}` : '';
     $('headline').textContent = headlines[s.state];
     const parts = [`источник: ${s.source} (${s.sourceType})`, `событий: ${s.counts.events} в ${s.counts.files} файлах`];
     if (s.lastCycle) parts.push(`последний цикл: ${when(s.lastCycle.at)}`);
@@ -272,7 +304,12 @@ function renderStatus(s) {
 
     const error = s.lastCycle?.error;
     $('status-error').classList.toggle('hidden', !error);
-    $('status-error').textContent = error ? `${error}. Календарь не менялся; попытка повторится автоматически.` : '';
+    $('status-error').textContent = !error ? ''
+        : s.running ? `${error}. Это итог прошлого цикла; сейчас идёт новый.`
+        : `${error}. Календарь не менялся; попытка повторится автоматически.`;
+    renderStage(s.stage);
+    $('stale-note').classList.toggle('hidden', !s.running);
+    $('attention').classList.toggle('stale', s.running);
 
     const held = s.counts.heldDeletes;
     $('held-banner').classList.toggle('hidden', !held);

@@ -6,6 +6,7 @@ Authentication is expected to be done by a reverse proxy in front of this app.
 """
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -68,6 +69,8 @@ def create_app(
 
     # Read once: a page newer than the running process would call endpoints the process does not have.
     page = _INDEX.read_text(encoding="utf-8")
+    # Which code this process runs. After an update without a restart it still names the old one.
+    version = _code_version()
 
     @app.get("/", include_in_schema=False)
     def index() -> HTMLResponse:
@@ -90,11 +93,13 @@ def create_app(
         else:
             state = "ok"
         return {
+            "version": version,
             "source": source,
             "sourceType": config.sources[source].type,
             "state": state,
             "running": service.running,
             "progress": service.progress,
+            "stage": service.stage,
             "fileSyncs": service.file_syncs,
             "secondsUntilNextCycle": service.seconds_until_next_cycle,
             "lastCycle": last,
@@ -236,6 +241,18 @@ def create_app(
         return {"ok": True}
 
     return app
+
+
+def _code_version() -> str | None:
+    """The commit the code was at when the process started, as "abc1234 2026-10-10", or None outside git."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%h %cs"], cwd=Path(__file__).parent,
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() or None
 
 
 def _masked(value: Any) -> Any:

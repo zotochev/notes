@@ -64,6 +64,8 @@ class SyncService:
         self._thread: threading.Thread | None = None
         # What the running cycle is doing right now, for the admin page.
         self.progress = ""
+        self._stage: dict[str, Any] | None = None
+        self._started_at = 0.0
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="sync", daemon=True)
@@ -89,6 +91,19 @@ class SyncService:
         return self._running.is_set()
 
     @property
+    def stage(self) -> dict[str, Any] | None:
+        """Where the running sync is: its stage, how far it has got and for how long it has run. None when idle."""
+        stage = self._stage
+        if stage is None:
+            return None
+        stage = {**stage, "seconds": round(time.time() - self._started_at)}
+        listing = self.listing
+        if stage["phase"] == "listing" and listing is not None:
+            # Folders read so far, out of those known to be left: the total grows as the walk goes deeper.
+            stage.update(done=listing["read"], total=listing["read"] + listing["waiting"])
+        return stage
+
+    @property
     def listing(self) -> dict[str, Any] | None:
         """How the source's file listing is going, batch by batch; None for a source that lists in one go."""
         walker = getattr(self._source, "walker", None)
@@ -104,7 +119,7 @@ class SyncService:
         """Run one cycle and record its report. Never raises: any failure becomes report.error."""
         allow_mass_delete = self._deletions_approved.is_set()
         with self._busy:
-            self._running.set()
+            self._begin(None)
             try:
                 with Store(self._db_path) as store:
                     report = self._guarded(store, lambda engine: engine.run_cycle(allow_mass_delete))
@@ -112,8 +127,7 @@ class SyncService:
                         self._deletions_approved.clear()
                     store.add_cycle(self.source_name, asdict(report))
             finally:
-                self._running.clear()
-                self.progress = ""
+                self._end()
         return report
 
     def sync_file(self, path: str) -> CycleReport | None:
@@ -124,22 +138,36 @@ class SyncService:
         if not self._busy.acquire(blocking=False):
             return None
         try:
-            self._running.set()
+            self._begin(path)
             with Store(self._db_path) as store:
                 report = self._guarded(store, lambda engine: engine.sync_file(path))
             self.file_syncs += 1
         finally:
-            self._running.clear()
-            self.progress = ""
+            self._end()
             self._busy.release()
         return report
+
+    def _begin(self, file: str | None) -> None:
+        """Mark a sync as started: a whole cycle, or one file."""
+        self._started_at = time.time()
+        self._stage = {"phase": "listing" if file is None else "reading", "done": 0, "total": 0, "file": file}
+        self._running.set()
+
+    def _end(self) -> None:
+        self._running.clear()
+        self._stage = None
+        self.progress = ""
+
+    def _set_stage(self, phase: str, done: int, total: int) -> None:
+        if self._stage is not None:
+            self._stage = {**self._stage, "phase": phase, "done": done, "total": total}
 
     def _guarded(self, store: Store, run: Callable[[SyncEngine], CycleReport]) -> CycleReport:
         try:
             calendar = self._calendar_factory()
             return run(SyncEngine(
                 self.source_name, self._source, calendar, store, self._settings,
-                on_progress=self._set_progress, tasks=self._tasks_factory(),
+                on_progress=self._set_progress, tasks=self._tasks_factory(), on_stage=self._set_stage,
             ))
         except CalendarUnavailable as e:
             return CycleReport(error=f"календарь недоступен: {e}")

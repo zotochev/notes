@@ -305,3 +305,47 @@ def test_refused_or_incomplete_google_answer_is_explained(world):
     assert (refused.status_code, bare.status_code) == (400, 400)
     assert "Google не выдал доступ: access_denied" in refused.json()["detail"]
     assert "нет кода входа" in bare.json()["detail"]
+
+
+def test_status_names_the_code_version_the_process_runs(world):
+    version = world.status()["version"]
+
+    # A short commit hash and its date; None only when the code is not in a git checkout.
+    assert version is None or len(version.split()) == 2
+
+
+def test_status_shows_the_stage_of_a_running_cycle_and_nothing_when_idle(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.source.files["/b.md"] = event("u1", "Other")
+    seen: list[dict] = []
+    read, insert = world.source.read_bytes, world.calendar.insert
+
+    def read_and_look(file):
+        seen.append(world.status()["stage"])
+        return read(file)
+
+    def insert_and_look(*args):
+        seen.append(world.status()["stage"])
+        return insert(*args)
+
+    world.source.read_bytes, world.calendar.insert = read_and_look, insert_and_look
+    world.service.run_cycle()
+
+    reading, writing = seen[0], seen[-1]
+    assert (reading["phase"], reading["total"], reading["file"]) == ("reading", 2, None)
+    assert (writing["phase"], writing["done"], writing["total"]) == ("writing", 1, 2)
+    assert writing["seconds"] >= 0
+    assert world.status()["stage"] is None
+
+
+def test_stage_of_a_single_file_sync_names_the_file(world):
+    world.source.files["/a.md"] = event("u1", "Meeting")
+    world.service.run_cycle()
+    world.source.files["/a.md"] = event("u1", "Renamed")
+    seen: list[dict] = []
+    update = world.calendar.update
+    world.calendar.update = lambda *args: (seen.append(world.status()["stage"]), update(*args))[1]
+
+    world.client.post("/api/files/sync", json={"path": "/a.md"})
+
+    assert (seen[0]["phase"], seen[0]["file"], seen[0]["total"]) == ("writing", "/a.md", 1)

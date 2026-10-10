@@ -72,10 +72,14 @@ class SyncEngine:
         new_event_id: Callable[[], str] = lambda: uuid.uuid4().hex,
         on_progress: Callable[[str], None] = lambda message: None,
         tasks: Tasks | None = None,
+        on_stage: Callable[[str, int, int], None] = lambda stage, done, total: None,
     ) -> None:
         """`on_progress` receives a short description of what the cycle is doing right now.
 
-        Without `tasks`, events work as usual and every task in a file is reported as an error.
+        `on_stage` receives the stage the cycle is in ("listing", "reading" or
+        "writing") and how far it has got: `done` out of `total`, both 0 when
+        there is nothing to count. Without `tasks`, events work as usual and
+        every task in a file is reported as an error.
         """
         self._source_id = source_id
         self._source = source
@@ -88,6 +92,7 @@ class SyncEngine:
         # Sync errors already reported, so a failure repeated every cycle is journalled once.
         self._known_errors: set[tuple[str, str | None, str]] = set()
         self._on_progress = on_progress
+        self._on_stage = on_stage
         # Progress of the write phase.
         self._to_apply = 0
         self._applied = 0
@@ -99,6 +104,7 @@ class SyncEngine:
 
     def _action_done(self) -> None:
         self._applied += 1
+        self._on_stage("writing", self._applied, self._to_apply)
         if time.monotonic() - self._last_progress >= _PROGRESS_INTERVAL_SEC:
             self._last_progress = time.monotonic()
             self._say(f"записано в календарь {self._applied} из {self._to_apply}")
@@ -116,6 +122,7 @@ class SyncEngine:
         return report
 
     def _run(self, report: CycleReport, allow_mass_delete: bool) -> None:
+        self._on_stage("listing", 0, 0)
         self._say("получаю список файлов…")
         all_files = self._source.list_files()
         listing = {f.path: f for f in all_files if self._is_watched(f.path)}
@@ -163,6 +170,7 @@ class SyncEngine:
         self._applied = 0
         self._to_apply = len(all_actions) + orphan_count - (delete_count if hold_deletes else 0)
         self._last_progress = time.monotonic()
+        self._on_stage("writing", 0, self._to_apply)
         if self._to_apply:
             self._say(f"изменений для календаря: {self._to_apply}, записываю…")
 
@@ -204,6 +212,7 @@ class SyncEngine:
             report.error = "файл не отслеживается"
             return
         self._known_errors = {(i.path, i.uid, i.message) for i in issues if i.kind == "sync"}
+        self._on_stage("reading", 0, 1)
         self._say(f"синхронизирую файл {path}…")
         in_file = tracked.get(path, {})
         try:
@@ -235,6 +244,7 @@ class SyncEngine:
             report.held_deletes = delete_count
         self._applied = 0
         self._to_apply = len(actions) - report.held_deletes
+        self._on_stage("writing", 0, self._to_apply)
         self._last_progress = time.monotonic()
         if file is not None:
             self._apply_file(file, actions, in_file, report, hold_deletes)
@@ -285,11 +295,13 @@ class SyncEngine:
                 return e
 
         results: dict[str, str | bytes | SourceError] = {}
+        self._on_stage("reading", 0, len(files))
         last_progress = time.monotonic()
         with ThreadPoolExecutor(max_workers=self._settings.read_concurrency) as pool:
             futures = {pool.submit(read, f): f for f in files}
             for future in as_completed(futures):
                 results[futures[future].path] = future.result()
+                self._on_stage("reading", len(results), len(files))
                 if time.monotonic() - last_progress >= _PROGRESS_INTERVAL_SEC:
                     last_progress = time.monotonic()
                     self._say(f"прочитано файлов {len(results)} из {len(files)}")
