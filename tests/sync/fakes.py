@@ -97,3 +97,71 @@ class FakeCalendar:
         if self.fail_next is not None:
             error, self.fail_next = self.fail_next, None
             raise error
+
+
+class FakeTasks:
+    """Google Tasks: the service chooses the ids, and an update changes only the fields it is given."""
+
+    def __init__(self) -> None:
+        # (tasklist, task_id) -> task
+        self.tasks: dict[tuple[str, str], dict[str, Any]] = {}
+        self.deleted: set[tuple[str, str]] = set()
+        # Raised by the next write, once.
+        self.fail_next: Exception | None = None
+        # When set, the next insert is stored and then reports a failure, like a lost response.
+        self.lose_next_insert_response = False
+        self.calls: list[str] = []
+
+    def titles(self, tasklist: str | None = None) -> list[str]:
+        return sorted(t["title"] for (lst, _), t in self.tasks.items() if tasklist in (None, lst))
+
+    def insert(self, tasklist: str, body: dict[str, Any]) -> str:
+        self._before("insert")
+        task_id = f"task{len(self.tasks) + len(self.deleted) + 1}"
+        self.tasks[(tasklist, task_id)] = {"status": "needsAction", **body}
+        if self.lose_next_insert_response:
+            self.lose_next_insert_response = False
+            raise CalendarError("connection reset")
+        return task_id
+
+    def update(self, tasklist: str, task_id: str, body: dict[str, Any]) -> None:
+        self._before("update")
+        if (tasklist, task_id) not in self.tasks:
+            raise EventNotFound(task_id)
+        self.tasks[(tasklist, task_id)].update(body)
+
+    def delete(self, tasklist: str, task_id: str) -> None:
+        self._before("delete")
+        if self.tasks.pop((tasklist, task_id), None) is not None:
+            self.deleted.add((tasklist, task_id))
+
+    def find(self, tasklist: str, marker: str) -> str | None:
+        self.calls.append("find")
+        return next(
+            (task_id for (lst, task_id), t in self.tasks.items() if lst == tasklist and t["notes"].startswith(marker)),
+            None,
+        )
+
+    def get(self, tasklist: str, task_id: str) -> dict[str, Any]:
+        if (tasklist, task_id) not in self.tasks:
+            raise EventNotFound(task_id)
+        return {"id": task_id, **self.tasks[(tasklist, task_id)]}
+
+    def tasklists(self) -> list[dict[str, Any]]:
+        return [{"id": "@default", "title": "My Tasks"}, {"id": "work", "title": "Work"}]
+
+    def complete(self, title: str) -> None:
+        """Simulate the user ticking the task off in Google."""
+        (key,) = [k for k, t in self.tasks.items() if t["title"] == title]
+        self.tasks[key]["status"] = "completed"
+
+    def delete_by_hand(self, title: str) -> None:
+        (key,) = [k for k, t in self.tasks.items() if t["title"] == title]
+        del self.tasks[key]
+        self.deleted.add(key)
+
+    def _before(self, call: str) -> None:
+        self.calls.append(call)
+        if self.fail_next is not None:
+            error, self.fail_next = self.fail_next, None
+            raise error

@@ -19,7 +19,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from notificator.calendars.google import GoogleCalendar
+from notificator.calendars.google_tasks import GoogleTasks
 from notificator.config import STATE_FILE, Config
+from notificator.core.model import TASK
 from notificator.core.parsing import ParseContext, parse_text
 from notificator.service import SyncService
 from notificator.store import Store
@@ -44,8 +46,9 @@ def create_app(
     data_dir: Path,
     start_service: bool = True,
     calendar_factory: Callable[[], Any] | None = None,
+    tasks_factory: Callable[[], Any] | None = None,
 ) -> FastAPI:
-    """`calendar_factory` replaces Google Calendar in tests."""
+    """`calendar_factory` and `tasks_factory` replace Google Calendar and Google Tasks in tests."""
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if start_service:
@@ -57,6 +60,7 @@ def create_app(
     app = FastAPI(title="Notificator", lifespan=lifespan)
     auth = google_auth(config, data_dir)
     google = calendar_factory or (lambda: GoogleCalendar(auth.credentials()))
+    google_tasks = tasks_factory or (lambda: GoogleTasks(auth.credentials()))
     source = service.source_name
 
     def store() -> Store:
@@ -104,7 +108,10 @@ def create_app(
             # Events of sources that are no longer active: they are being removed from the calendar.
             "inactiveSources": {name: n for name, n in counts_by_source.items() if name != source},
             "googleSignedIn": auth.is_signed_in(),
+            # False for a token issued before tasks were added: signing in again grants it.
+            "tasksAllowed": auth.tasks_allowed(),
             "defaultCalendar": config.default_calendar,
+            "defaultTasklist": config.default_tasklist,
         }
 
     @app.get("/api/events")
@@ -114,18 +121,23 @@ def create_app(
 
     @app.get("/api/events/google")
     def event_in_google(path: str, uid: str) -> dict[str, Any]:
-        """The event as Google Calendar has it right now, for comparing with the file."""
+        """The event or task as Google has it right now, for comparing with the file."""
         with store() as db:
             tracked = next((e for e in db.events(source) if e["path"] == path and e["uid"] == uid), None)
         if tracked is None:
             raise HTTPException(status_code=404, detail="Это событие не отслеживается")
+        is_task = tracked["kind"] == TASK
         try:
-            remote = google().get(tracked["calendar_id"], tracked["gcal_event_id"])
+            if is_task and not tracked["gcal_event_id"]:
+                raise EventNotFound("the task was never confirmed")
+            service = google_tasks() if is_task else google()
+            remote = service.get(tracked["calendar_id"], tracked["gcal_event_id"])
         except EventNotFound:
-            raise HTTPException(status_code=404, detail="События нет в Google Calendar") from None
+            where = "Задачи нет в Google Tasks" if is_task else "События нет в Google Calendar"
+            raise HTTPException(status_code=404, detail=where) from None
         except CalendarError as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
-        return {**remote, "calendarId": tracked["calendar_id"], "synced": tracked["synced"]}
+        return {**remote, "kind": tracked["kind"], "calendarId": tracked["calendar_id"], "synced": tracked["synced"]}
 
     @app.get("/api/issues")
     def issues() -> list[dict[str, Any]]:
@@ -171,12 +183,13 @@ def create_app(
 
     @app.post("/api/validate")
     def validate(body: _Text) -> dict[str, Any]:
-        """Check text with <event> blocks the way a sync cycle would."""
+        """Check text with <event> and <task> blocks the way a sync cycle would."""
         tz = ZoneInfo(config.time_zone)
         parsed = parse_text(body.text, ParseContext(default_tz=tz, now=datetime.now(tz)))
         return {
             "events": [
-                {**asdict(e), "start": e.start.isoformat(), "end": e.end.isoformat()} for e in parsed.events
+                {**asdict(e), "start": e.start and e.start.isoformat(), "end": e.end and e.end.isoformat()}
+                for e in parsed.events
             ],
             "issues": [{"uid": i.uid, "message": i.message} for i in parsed.issues],
         }
@@ -185,6 +198,13 @@ def create_app(
     def calendars() -> list[dict[str, Any]]:
         try:
             return google().writable_calendars()
+        except CalendarError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @app.get("/api/tasklists")
+    def tasklists() -> list[dict[str, Any]]:
+        try:
+            return google_tasks().tasklists()
         except CalendarError as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
 

@@ -6,7 +6,7 @@ import pytest
 from notificator.store import Store
 from notificator.sync.engine import SyncEngine, SyncSettings
 from notificator.sync.ports import CalendarError, CalendarUnavailable
-from tests.sync.fakes import FakeCalendar, FakeSource
+from tests.sync.fakes import FakeCalendar, FakeSource, FakeTasks
 
 TZ = ZoneInfo("Europe/Ulyanovsk")
 SETTINGS = SyncSettings(default_calendar="primary", default_tz=TZ)
@@ -21,13 +21,14 @@ class World:
     def __init__(self, tmp_path) -> None:
         self.source = FakeSource()
         self.calendar = FakeCalendar()
+        self.tasks = FakeTasks()
         self.store = Store(tmp_path / "state.db")
         self.engine = self.engine_for("cloud", self.source)
 
     def engine_for(self, source_id: str, source: FakeSource, settings: SyncSettings = SETTINGS) -> SyncEngine:
         return SyncEngine(
             source_id, source, self.calendar, self.store, settings,
-            clock=lambda: datetime(2029, 6, 1, 12, 0, tzinfo=TZ),
+            clock=lambda: datetime(2029, 6, 1, 12, 0, tzinfo=TZ), tasks=self.tasks,
         )
 
     def sync(self, **kwargs):

@@ -81,14 +81,19 @@ class GoogleCalendar:
                 return calendars
 
     def _execute(self, request: HttpRequest) -> Any:
-        try:
-            return request.execute(num_retries=self._retries)
-        except HttpError as e:
-            raise _translate(e) from e
-        except GoogleAuthError as e:
-            raise CalendarUnavailable(f"не удалось получить доступ к Google: {e}") from e
-        except (OSError, httplib2.HttpLib2Error) as e:
-            raise CalendarUnavailable(f"нет связи с Google: {e}") from e
+        return execute(request, self._retries)
+
+
+def execute(request: HttpRequest, retries: int) -> Any:
+    """Run a Google API request, turning its failures into the errors the sync engine knows."""
+    try:
+        return request.execute(num_retries=retries)
+    except HttpError as e:
+        raise _translate(e) from e
+    except GoogleAuthError as e:
+        raise CalendarUnavailable(f"не удалось получить доступ к Google: {e}") from e
+    except (OSError, httplib2.HttpLib2Error) as e:
+        raise CalendarUnavailable(f"нет связи с Google: {e}") from e
 
 
 def _translate(error: HttpError) -> CalendarError:

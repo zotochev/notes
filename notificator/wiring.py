@@ -46,6 +46,7 @@ def sync_settings(config: Config) -> SyncSettings:
     return SyncSettings(
         default_calendar=config.default_calendar,
         default_tz=ZoneInfo(config.time_zone),
+        default_tasklist=config.default_tasklist,
         extensions=frozenset(config.extensions),
         max_delete_ratio=config.max_delete_ratio,
         held_deletes_min=config.held_deletes_min,

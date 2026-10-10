@@ -18,7 +18,7 @@ from typing import Any
 from notificator.core.model import EventKey, EventSpec, TrackedEvent
 
 _SETUP_LOCK = threading.Lock()
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     source  TEXT NOT NULL,
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS events (
     calendar_id   TEXT NOT NULL,
     fingerprint   TEXT,
     spec          TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'event',
     PRIMARY KEY (source, path, uid)
 );
 CREATE TABLE IF NOT EXISTS issues (
@@ -96,9 +97,12 @@ class Store:
         # Switching a file to WAL cannot wait for other connections, so threads
         # that open a new database at the same moment must take turns.
         with _SETUP_LOCK:
-            if self._db.execute("PRAGMA user_version").fetchone()[0] < _SCHEMA_VERSION:
+            version = self._db.execute("PRAGMA user_version").fetchone()[0]
+            if version < _SCHEMA_VERSION:
                 self._db.execute("PRAGMA journal_mode=WAL")
-                self._db.executescript(_SCHEMA + f"PRAGMA user_version = {_SCHEMA_VERSION};")
+                # Version 2 added events.kind: a database made by version 1 has the table without it.
+                upgrade = "ALTER TABLE events ADD COLUMN kind TEXT NOT NULL DEFAULT 'event';" if version == 1 else ""
+                self._db.executescript(_SCHEMA + upgrade + f"PRAGMA user_version = {_SCHEMA_VERSION};")
 
     def close(self) -> None:
         self._db.close()
@@ -147,28 +151,33 @@ class Store:
     def tracked(self, source: str) -> dict[str, dict[str, TrackedEvent]]:
         """Tracked events of one source, keyed by path, then uid."""
         rows = self._db.execute(
-            "SELECT path, uid, gcal_event_id, calendar_id, fingerprint FROM events WHERE source = ?",
+            "SELECT path, uid, gcal_event_id, calendar_id, fingerprint, kind FROM events WHERE source = ?",
             (source,),
         )
         result: dict[str, dict[str, TrackedEvent]] = {}
-        for path, uid, gcal_event_id, calendar_id, fp in rows:
+        for path, uid, gcal_event_id, calendar_id, fp, kind in rows:
             result.setdefault(path, {})[uid] = TrackedEvent(
-                EventKey(source, path, uid), gcal_event_id, calendar_id, fp
+                EventKey(source, path, uid), gcal_event_id, calendar_id, fp, kind
             )
         return result
 
     def tracked_event_ids(self) -> set[tuple[str, str]]:
-        """(calendar_id, gcal_event_id) of every tracked event, whatever its source."""
-        return set(self._db.execute("SELECT calendar_id, gcal_event_id FROM events").fetchall())
+        """(calendar_id, gcal_event_id) of every tracked calendar event, whatever its source."""
+        return set(
+            self._db.execute("SELECT calendar_id, gcal_event_id FROM events WHERE kind = 'event'").fetchall()
+        )
 
     def tracked_in_other_sources(self, source: str) -> list[TrackedEvent]:
         """Tracked events that belong to any source except the given one."""
         rows = self._db.execute(
-            "SELECT source, path, uid, gcal_event_id, calendar_id, fingerprint FROM events "
+            "SELECT source, path, uid, gcal_event_id, calendar_id, fingerprint, kind FROM events "
             "WHERE source != ? ORDER BY source, path, uid",
             (source,),
         )
-        return [TrackedEvent(EventKey(s, path, uid), event_id, cal, fp) for s, path, uid, event_id, cal, fp in rows]
+        return [
+            TrackedEvent(EventKey(s, path, uid), event_id, cal, fp, kind)
+            for s, path, uid, event_id, cal, fp, kind in rows
+        ]
 
     def forget_other_sources_without_events(self, source: str) -> None:
         """Drop file versions and issues of other sources that have no events left."""
@@ -186,8 +195,10 @@ class Store:
         with self._db:
             self._db.execute(
                 "INSERT OR REPLACE INTO events "
-                "(source, path, uid, gcal_event_id, calendar_id, fingerprint, spec) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (key.source, key.path, key.uid, gcal_event_id, calendar_id, fingerprint, _spec_json(spec)),
+                "(source, path, uid, gcal_event_id, calendar_id, fingerprint, spec, kind) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (key.source, key.path, key.uid, gcal_event_id, calendar_id, fingerprint, _spec_json(spec),
+                 spec.kind),
             )
 
     def move_event(self, key: EventKey, new_key: EventKey) -> None:
@@ -209,15 +220,15 @@ class Store:
     def events(self, source: str) -> list[dict[str, Any]]:
         """Tracked events with what they say, for display. `synced` is False while a write is unconfirmed."""
         rows = self._db.execute(
-            "SELECT path, uid, gcal_event_id, calendar_id, fingerprint IS NOT NULL, spec FROM events "
+            "SELECT path, uid, gcal_event_id, calendar_id, fingerprint IS NOT NULL, spec, kind FROM events "
             "WHERE source = ? ORDER BY path, uid",
             (source,),
         )
         return [
             # The spec's own calendar_id (None = default) must not hide where the event really is.
             {**json.loads(spec), "path": path, "uid": uid, "gcal_event_id": gcal_event_id,
-             "calendar_id": calendar_id, "synced": bool(synced)}
-            for path, uid, gcal_event_id, calendar_id, synced, spec in rows
+             "calendar_id": calendar_id, "synced": bool(synced), "kind": kind}
+            for path, uid, gcal_event_id, calendar_id, synced, spec, kind in rows
         ]
 
     def event_counts(self) -> dict[str, int]:
@@ -284,6 +295,6 @@ class Store:
 
 def _spec_json(spec: EventSpec) -> str:
     data = asdict(spec)
-    data["start"] = spec.start.isoformat()
-    data["end"] = spec.end.isoformat()
+    data["start"] = spec.start.isoformat() if spec.start else None
+    data["end"] = spec.end.isoformat() if spec.end else None
     return json.dumps(data, ensure_ascii=False)

@@ -72,6 +72,8 @@ class Config(_Strict):
     active_source: str
     sources: dict[str, SourceConfig]
     default_calendar: str = "primary"
+    # The task list for tasks without their own `tasklist`; "@default" is the account's main list.
+    default_tasklist: str = "@default"
     time_zone: str = "Europe/Ulyanovsk"
     extensions: list[str] = [".csv", ".md", ".tsv", ".txt", ".xlsx"]
     scan_interval_sec: int = Field(default=600, ge=5)

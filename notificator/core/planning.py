@@ -13,19 +13,24 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from notificator.core.model import EventKey, EventSpec, RemoteFile, TrackedEvent
+from notificator.core.model import TASK, EventKey, EventSpec, RemoteFile, TrackedEvent
 from notificator.core.parsing import ParseResult
 from notificator.core.rendering import fingerprint, render_body
 
 
 @dataclass(frozen=True, slots=True)
 class Push:
-    """Make the calendar event match `body` (create it if needed)."""
+    """Make the calendar event or the task match `body` (create it if needed)."""
     key: EventKey
+    # The calendar of an event, the task list of a task.
     calendar_id: str
     body: dict[str, Any]
     fingerprint: str
     spec: EventSpec
+
+    @property
+    def kind(self) -> str:
+        return self.spec.kind
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,15 +61,19 @@ def plan_file(
     parsed: ParseResult,
     tracked: Mapping[str, TrackedEvent],
     default_calendar: str,
+    default_tasklist: str = "@default",
 ) -> list[Action]:
     """Actions for one file that was read successfully. `tracked` is keyed by uid."""
     actions: list[Action] = []
     for spec in parsed.events:
         body = render_body(spec, file.path, file.link)
         fp = fingerprint(body)
-        calendar_id = spec.calendar_id or default_calendar
+        calendar_id = spec.calendar_id or (default_tasklist if spec.kind == TASK else default_calendar)
         known = tracked.get(spec.uid)
-        if known is None or known.fingerprint != fp or known.calendar_id != calendar_id:
+        if (
+            known is None or known.fingerprint != fp
+            or known.calendar_id != calendar_id or known.kind != spec.kind
+        ):
             actions.append(Push(EventKey(source, file.path, spec.uid), calendar_id, body, fp, spec))
     actions.extend(Delete(t.key) for uid, t in tracked.items() if parsed.confirms_absent(uid))
     return actions

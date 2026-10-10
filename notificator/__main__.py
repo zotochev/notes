@@ -164,8 +164,7 @@ def _first_cycle_after_move(config, data_dir: Path, old: str, new: str, prefixes
         if call.action == "delete":
             print(f"    удалить {known.get(call.event_id, call.event_id)}")
         elif call.action == "insert":
-            where = (call.body.get("description") or "\n").splitlines()[1:2]
-            print(f"    создать {call.body['summary']!r} {' '.join(where)}")
+            print(f"    создать {_what(call)}")
     if preview.deletes_need_approval:
         print("  Удалений много: настоящий цикл отложит их до подтверждения в админке.")
     if "delete" in actions and "insert" in actions:
@@ -213,16 +212,31 @@ def _plan(config, data_dir: Path, source_name: str | None) -> int:
         return 1
     names = {"insert": "создать", "update": "обновить", "delete": "удалить"}
     for call in result.calls:
-        body = call.body or {}
-        when = body.get("start", {}).get("dateTime", "")
-        where = (body.get("description") or "\n").splitlines()[1:2]
-        what = repr(body["summary"]) if body else f"событие {call.event_id}"
-        print(f"  {names[call.action]:9} {when:26} {what} {' '.join(where)} -> {call.calendar_id}")
+        print(f"  {names[call.action]:9} {_when(call):26} {_what(call)} -> {call.calendar_id}")
     if not result.calls:
         print("  Изменений нет.")
     if result.deletes_need_approval:
         print(f"Удалений слишком много ({report.deleted}): настоящий цикл отложит их до подтверждения.")
     return 0
+
+
+def _when(call) -> str:
+    """The start of a planned event or the due date of a planned task."""
+    body = call.body or {}
+    if call.kind == "task":
+        return (body.get("due") or "")[:10]
+    return body.get("start", {}).get("dateTime", "")
+
+
+def _what(call) -> str:
+    """A planned call's event or task in words: its title and the file it comes from."""
+    body = call.body
+    is_task = call.kind == "task"
+    if not body:
+        return f"{'задача' if is_task else 'событие'} {call.event_id}"
+    text = body.get("notes") if is_task else body.get("description")
+    where = " ".join((text or "\n").splitlines()[1:2])
+    return f"{'задача ' if is_task else ''}{(body.get('title') if is_task else body['summary'])!r} {where}"
 
 
 if __name__ == "__main__":

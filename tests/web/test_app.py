@@ -264,3 +264,35 @@ def test_listing_progress_shows_the_batches_of_a_source_that_walks_its_tree(worl
 
     assert (listing["active"], listing["read"], listing["concurrency"]) == (False, 2, 1)
     assert [g["folder"] for g in listing["groups"]] == ["/", "/notes"]
+
+
+def test_task_can_be_looked_up_in_google_and_task_lists_are_listed(tmp_path):
+    from tests.sync.fakes import FakeTasks
+
+    source, calendar, tasks = FakeSource(), FakeCalendar(), FakeTasks()
+    service = SyncService(CONFIG, tmp_path, source=source, calendar_factory=lambda: calendar, tasks_factory=lambda: tasks)
+    client = TestClient(create_app(
+        service, CONFIG, tmp_path, start_service=False, calendar_factory=lambda: calendar, tasks_factory=lambda: tasks,
+    ))
+    source.files["/a.md"] = "<task><uid>t1</uid><summary>Call the bank</summary><due>2030-01-15</due></task>"
+    service.run_cycle()
+
+    (shown,) = client.get("/api/events").json()
+    remote = client.get("/api/events/google", params={"path": "/a.md", "uid": "t1"}).json()
+    lists = client.get("/api/tasklists").json()
+    status = client.get("/api/status").json()
+
+    assert (shown["kind"], shown["calendar_id"], shown["end"]) == ("task", "@default", None)
+    assert (remote["kind"], remote["title"], remote["status"], remote["calendarId"]) == (
+        "task", "Call the bank", "needsAction", "@default",
+    )
+    assert lists == [{"id": "@default", "title": "My Tasks"}, {"id": "work", "title": "Work"}]
+    assert (status["tasksAllowed"], status["defaultTasklist"]) == (False, "@default")
+
+
+def test_validate_reports_tasks(world):
+    text = "<task><uid>t1</uid><summary>Some day</summary></task>"
+
+    (shown,) = world.client.post("/api/validate", json={"text": text}).json()["events"]
+
+    assert (shown["kind"], shown["start"], shown["end"]) == ("task", None, None)

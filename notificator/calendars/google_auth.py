@@ -14,7 +14,8 @@ from notificator.sync.ports import CalendarUnavailable
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
+SCOPES = ["https://www.googleapis.com/auth/calendar", TASKS_SCOPE]
 
 
 class GoogleAuth:
@@ -31,7 +32,9 @@ class GoogleAuth:
         if not self._token_file.is_file():
             raise CalendarUnavailable("Google не авторизован: войдите через админку")
         try:
-            creds = Credentials.from_authorized_user_file(str(self._token_file), scopes=SCOPES)
+            # With the scopes the token was given: asking to refresh it for more would be refused,
+            # and a token from before tasks were added must keep working for the calendar.
+            creds = Credentials.from_authorized_user_file(str(self._token_file))
             if not creds.valid:
                 creds.refresh(Request())
                 self._save(creds)
@@ -43,6 +46,14 @@ class GoogleAuth:
 
     def is_signed_in(self) -> bool:
         return self._token_file.is_file()
+
+    def tasks_allowed(self) -> bool:
+        """True when the stored token was given access to Google Tasks."""
+        try:
+            scopes = json.loads(self._token_file.read_text(encoding="utf-8")).get("scopes") or []
+        except (OSError, ValueError, AttributeError):
+            return False
+        return TASKS_SCOPE in scopes
 
     def authorization_url(self) -> str:
         """Start a sign-in and return the Google page to send the user to."""

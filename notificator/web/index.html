@@ -53,7 +53,7 @@
     .tag.parse, .tag.held { background: var(--warn-bg); color: var(--warn); }
     .tag.sync, .tag.source, .tag.error { background: var(--bad-bg); color: var(--bad); }
     .tag.created, .tag.updated { background: var(--ok-bg); color: var(--ok); }
-    .tag.deleted { background: var(--line); color: var(--text); }
+    .tag.deleted, .tag.task { background: var(--line); color: var(--text); }
     .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
     .dot.pending { background: var(--warn); }
     details > summary { cursor: pointer; font-weight: 600; }
@@ -106,7 +106,7 @@
             <input id="filter" type="search" placeholder="Поиск по названию, файлу, UID">
         </div>
         <div class="table-wrap"><table>
-            <thead><tr><th></th><th>Название</th><th>Начало</th><th>Конец</th><th>UID</th><th>Календарь</th></tr></thead>
+            <thead><tr><th></th><th>Название</th><th>Начало</th><th>Конец</th><th>UID</th><th>Календарь или список</th></tr></thead>
             <tbody id="events"></tbody>
         </table></div>
     </section>
@@ -152,6 +152,7 @@
             <button id="google-logout">Выйти</button>
         </div>
         <div id="calendars" class="muted" style="margin-top:8px"></div>
+        <div id="tasklists" class="muted" style="margin-top:8px"></div>
     </section>
 
     <section>
@@ -169,7 +170,7 @@
             <h2 id="google-modal-title" class="grow" style="margin:0"></h2>
             <button id="google-modal-close" title="Закрыть">×</button>
         </div>
-        <p class="muted" style="margin:4px 0 10px">Так событие выглядит в Google Calendar прямо сейчас.</p>
+        <p id="google-modal-note" class="muted" style="margin:4px 0 10px"></p>
         <div id="google-modal-body"></div>
     </div>
 </div>
@@ -189,6 +190,8 @@ let lastFileSyncs = null;
 let allEvents = [];
 let allIssues = [];
 let calendarNames = {};
+let tasklistNames = {};
+let tasksAllowed = null;
 // True while anything is being synchronised: per-file buttons are disabled.
 let busy = false;
 // path -> {text, bad}: what the last sync of a file ended with, shown next to its button for a while.
@@ -205,6 +208,13 @@ function when(iso, timeZone) {
     if (!iso) return '';
     const options = {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'};
     try { return new Date(iso).toLocaleString('ru-RU', timeZone ? {...options, timeZone} : options); }
+    catch { return iso; }
+}
+
+function day(iso, timeZone) {
+    if (!iso) return '';
+    const options = {day: '2-digit', month: '2-digit', year: 'numeric'};
+    try { return new Date(iso).toLocaleDateString('ru-RU', timeZone ? {...options, timeZone} : options); }
     catch { return iso; }
 }
 
@@ -275,6 +285,10 @@ function renderStatus(s) {
         ? `Вход выполнен. Календарь по умолчанию: <span class="mono">${esc(s.defaultCalendar)}</span>`
         : '<span style="color:var(--bad)">Вход в Google не выполнен — события не синхронизируются.</span>';
     $('google-logout').disabled = !s.googleSignedIn;
+    if (s.googleSignedIn && s.tasksAllowed !== tasksAllowed) {
+        tasksAllowed = s.tasksAllowed;
+        loadTasklists(s.defaultTasklist);
+    }
 }
 
 function renderIssues() {
@@ -302,12 +316,14 @@ function renderEvents() {
             `${esc(events[0].path)} <span class="muted">· ${events.length}</span>`)
         + events.map(e => `<tr>
         <td><span class="dot ${e.synced ? '' : 'pending'}" title="${e.synced ? 'Есть в календаре' : 'Ещё не записано в календарь'}"></span></td>
-        <td><button class="link" data-path="${esc(e.path)}" data-uid="${esc(e.uid)}" title="Показать событие в Google Calendar">${esc(e.summary)}</button>${e.recurrence ? ` <span class="muted mono">${esc(e.recurrence)}</span>` : ''}
+        <td><button class="link" data-path="${esc(e.path)}" data-uid="${esc(e.uid)}" title="Показать, как это выглядит в Google">${esc(e.summary)}</button>${e.kind === 'task' ? ' <span class="tag task">задача</span>' : ''}${e.recurrence ? ` <span class="muted mono">${esc(e.recurrence)}</span>` : ''}
             ${e.location ? `<div class="muted">${esc(e.location)}</div>` : ''}</td>
-        <td class="nowrap">${esc(when(e.start, e.time_zone))}</td>
-        <td class="nowrap">${esc(when(e.end, e.time_zone))} <span class="muted">${esc(e.time_zone)}</span></td>
+        ${e.kind === 'task'
+            ? `<td class="nowrap" colspan="2">${e.start ? 'срок: ' + esc(day(e.start, e.time_zone)) : '<span class="muted">без срока</span>'}</td>`
+            : `<td class="nowrap">${esc(when(e.start, e.time_zone))}</td>
+        <td class="nowrap">${esc(when(e.end, e.time_zone))} <span class="muted">${esc(e.time_zone)}</span></td>`}
         <td class="mono">${esc(e.uid)}</td>
-        <td>${esc(calendarNames[e.calendar_id] || e.calendar_id)}</td></tr>`).join(''), 6, 'Событий нет');
+        <td>${esc((e.kind === 'task' ? tasklistNames : calendarNames)[e.calendar_id] || e.calendar_id)}</td></tr>`).join(''), 6, 'Событий нет');
 }
 
 function fileResult(report) {
@@ -359,6 +375,27 @@ function googleTime(t) {
     return t.date ? esc(t.date) : `${esc(when(t.dateTime, t.timeZone))} <span class="muted">${esc(t.timeZone)}</span>`;
 }
 
+function googleTaskHtml(task) {
+    const statuses = {
+        needsAction: '<span class="tag created">не выполнена</span>',
+        completed: '<span class="tag deleted">выполнена</span>',
+    };
+    const fields = [
+        ['Статус', (task.deleted ? '<span class="tag error">удалена в Google</span>' : statuses[task.status] || esc(task.status))
+            + (task.synced ? '' : ' <span class="tag held">последняя запись не подтверждена</span>')],
+        ['Список', esc(tasklistNames[task.calendarId] || task.calendarId)],
+        // Google keeps only the date of a due time, as midnight UTC.
+        ['Срок', task.due ? esc(day(task.due, 'UTC')) : ''],
+        ['Выполнена', esc(when(task.completed))],
+        ['Заметка', task.notes ? esc(task.notes) : ''],
+        ['Изменено', esc(when(task.updated))],
+        ['ID в Google', `<span class="mono">${esc(task.id)}</span>`],
+        ['Ссылка', task.webViewLink ? `<a href="${esc(task.webViewLink)}" target="_blank" rel="noopener noreferrer">Открыть в Google Tasks</a>` : ''],
+    ];
+    return fields.filter(([, value]) => value)
+        .map(([label, value]) => `<div class="field"><div>${label}</div><div>${value}</div></div>`).join('');
+}
+
 function googleEventHtml(ev) {
     const statuses = {
         confirmed: '<span class="tag created">есть в календаре</span>',
@@ -389,14 +426,18 @@ function googleEventHtml(ev) {
 
 async function openGoogleModal(path, uid) {
     $('google-modal-title').textContent = 'Загрузка…';
+    $('google-modal-note').textContent = '';
     $('google-modal-body').innerHTML = '';
     $('google-modal').classList.remove('hidden');
     try {
         const ev = await api('/api/events/google?' + new URLSearchParams({path, uid}));
-        $('google-modal-title').textContent = ev.summary || '(без названия)';
-        $('google-modal-body').innerHTML = googleEventHtml(ev);
+        const isTask = ev.kind === 'task';
+        $('google-modal-title').textContent = (isTask ? ev.title : ev.summary) || '(без названия)';
+        $('google-modal-note').textContent = isTask
+            ? 'Так задача выглядит в Google Tasks прямо сейчас.' : 'Так событие выглядит в Google Calendar прямо сейчас.';
+        $('google-modal-body').innerHTML = isTask ? googleTaskHtml(ev) : googleEventHtml(ev);
     } catch (e) {
-        $('google-modal-title').textContent = 'Не удалось показать событие';
+        $('google-modal-title').textContent = 'Не удалось показать';
         $('google-modal-body').innerHTML = `<div class="field"><div>Причина</div><div>${esc(e.message)}</div></div>`;
     }
 }
@@ -470,6 +511,23 @@ async function loadCalendars() {
             `<div><b>${esc(c.summary)}</b> <span class="mono">${esc(c.id)}</span></div>`).join('');
         renderEvents();
     } catch (e) { $('calendars').textContent = `Список календарей недоступен: ${e.message}`; }
+}
+
+async function loadTasklists(defaultTasklist) {
+    if (!tasksAllowed) {
+        $('tasklists').textContent = 'Задачи (<task>) пока не синхронизируются: войдите в Google заново, '
+            + 'чтобы дать доступ к Google Tasks.';
+        return;
+    }
+    try {
+        const lists = await api('/api/tasklists');
+        tasklistNames = Object.fromEntries(lists.map(l => [l.id, l.title]));
+        // "@default" is how the main list is named in the settings.
+        if (lists.length && !tasklistNames[defaultTasklist]) tasklistNames[defaultTasklist] = lists[0].title;
+        $('tasklists').innerHTML = 'Списки задач:' + lists.map(l =>
+            `<div><b>${esc(l.title)}</b> <span class="mono">${esc(l.id)}</span></div>`).join('');
+        renderEvents();
+    } catch (e) { $('tasklists').textContent = `Списки задач недоступны: ${e.message}`; }
 }
 
 $('sync-now').addEventListener('click', async () => { await api('/api/sync', {method: 'POST'}); refreshStatus(); });

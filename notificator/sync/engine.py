@@ -16,14 +16,15 @@ from datetime import datetime
 from pathlib import PurePosixPath
 from zoneinfo import ZoneInfo
 
-from notificator.core.model import RemoteFile, TrackedEvent
+from notificator.core.model import TASK, RemoteFile, TrackedEvent
 from notificator.core.parsing import ParseContext, ParseResult, is_binary, parse_file
 from notificator.core.planning import (
     Action, Delete, Push, applied_version, files_to_read, plan_file, plan_vanished, too_many_deletes,
 )
+from notificator.core.rendering import task_marker
 from notificator.store import Store
 from notificator.sync.ports import (
-    Calendar, CalendarError, CalendarUnavailable, EventAlreadyExists, EventNotFound, Source, SourceError,
+    Calendar, CalendarError, CalendarUnavailable, EventAlreadyExists, EventNotFound, Source, SourceError, Tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ _PROGRESS_INTERVAL_SEC = 5
 class SyncSettings:
     default_calendar: str
     default_tz: ZoneInfo
+    default_tasklist: str = "@default"
     extensions: frozenset[str] = frozenset({".md", ".txt", ".csv", ".tsv", ".xlsx"})
     # Deletions wait for approval when a cycle wants to delete at least
     # `held_deletes_min` events and more than this share of everything tracked.
@@ -68,11 +70,16 @@ class SyncEngine:
         clock: Callable[[], datetime] | None = None,
         new_event_id: Callable[[], str] = lambda: uuid.uuid4().hex,
         on_progress: Callable[[str], None] = lambda message: None,
+        tasks: Tasks | None = None,
     ) -> None:
-        """`on_progress` receives a short description of what the cycle is doing right now."""
+        """`on_progress` receives a short description of what the cycle is doing right now.
+
+        Without `tasks`, events work as usual and every task in a file is reported as an error.
+        """
         self._source_id = source_id
         self._source = source
         self._calendar = calendar
+        self._tasks = tasks
         self._store = store
         self._settings = settings
         self._clock = clock or (lambda: datetime.now(settings.default_tz))
@@ -130,7 +137,8 @@ class SyncEngine:
         for file, text in self._read_all(to_read, report):
             parsed = self._parse(file, text, tracked.get(file.path, {}), ctx)
             plans[file.path] = plan_file(
-                self._source_id, file, parsed, tracked.get(file.path, {}), self._settings.default_calendar
+                self._source_id, file, parsed, tracked.get(file.path, {}),
+                self._settings.default_calendar, self._settings.default_tasklist,
             )
         vanished = plan_vanished(listing.keys(), tracked)
         # The calendar mirrors the active source only. Events of other sources
@@ -213,7 +221,10 @@ class SyncEngine:
             self._store.set_issues(self._source_id, path, "source", [])
             ctx = ParseContext(default_tz=self._settings.default_tz, now=self._clock())
             parsed = self._parse(file, text, in_file, ctx)
-            actions = plan_file(self._source_id, file, parsed, in_file, self._settings.default_calendar)
+            actions = plan_file(
+                self._source_id, file, parsed, in_file,
+                self._settings.default_calendar, self._settings.default_tasklist,
+            )
         delete_count = sum(isinstance(a, Delete) for a in actions)
         hold_deletes = too_many_deletes(
             delete_count, sum(len(events) for events in tracked.values()),
@@ -335,10 +346,14 @@ class SyncEngine:
         return not errors and not held
 
     def _push(self, push: Push, current: TrackedEvent | None) -> None:
-        if current is not None and current.calendar_id != push.calendar_id:
-            # An event cannot be moved between calendars in place.
+        if current is not None and (current.calendar_id != push.calendar_id or current.kind != push.kind):
+            # Neither an event nor a task can be moved to another calendar or list in place,
+            # and one cannot be turned into the other.
             self._delete(current)
             current = None
+        if push.kind == TASK:
+            self._push_task(push, current)
+            return
         if current is None:
             self._create(push)
             return
@@ -364,7 +379,46 @@ class SyncEngine:
         self._store.put_event(push.key, event_id, push.calendar_id, push.spec, push.fingerprint)
         self._store.log(push.key, "created", push.spec.summary)
 
+    def _push_task(self, push: Push, current: TrackedEvent | None) -> None:
+        tasks = self._tasks_service()
+        task_id = current.gcal_event_id if current is not None else ""
+        if current is not None and not task_id:
+            # A first write that was recorded but never confirmed: the task may
+            # exist already. Find it instead of creating a second one.
+            task_id = tasks.find(push.calendar_id, task_marker(push.key.uid, push.key.path)) or ""
+        if task_id:
+            try:
+                tasks.update(push.calendar_id, task_id, push.body)
+            except EventNotFound:
+                # Deleted by hand in Google: make it again.
+                task_id = ""
+            else:
+                self._store.put_event(push.key, task_id, push.calendar_id, push.spec, push.fingerprint)
+                self._store.log(push.key, "updated", push.spec.summary)
+                return
+        # Google names the task, so there is no id to record yet. Record that
+        # the write has started: if we crash after Google accepted the task,
+        # the next cycle looks for it (above) instead of creating a duplicate.
+        self._store.put_event(push.key, "", push.calendar_id, push.spec, fingerprint=None)
+        task_id = tasks.insert(push.calendar_id, push.body)
+        self._store.put_event(push.key, task_id, push.calendar_id, push.spec, push.fingerprint)
+        self._store.log(push.key, "created", push.spec.summary)
+
+    def _tasks_service(self) -> Tasks:
+        if self._tasks is None:
+            raise CalendarError("задачи Google не подключены")
+        return self._tasks
+
     def _delete(self, event: TrackedEvent) -> None:
-        self._calendar.delete(event.calendar_id, event.gcal_event_id)
+        if event.kind == TASK:
+            tasks = self._tasks_service()
+            # Without an id the task may or may not have been created: look for it.
+            task_id = event.gcal_event_id or tasks.find(
+                event.calendar_id, task_marker(event.key.uid, event.key.path)
+            )
+            if task_id:
+                tasks.delete(event.calendar_id, task_id)
+        else:
+            self._calendar.delete(event.calendar_id, event.gcal_event_id)
         self._store.delete_event(event.key)
         self._store.log(event.key, "deleted")

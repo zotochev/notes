@@ -65,3 +65,11 @@ def test_preview_without_any_state(tmp_path, source):
 
     assert [c.action for c in result.calls] == ["insert"]
     assert not (tmp_path / STATE_FILE).exists()
+
+
+def test_preview_lists_tasks_as_tasks(tmp_path, source):
+    source.files["/a.md"] = "<task><uid>t1</uid><summary>Call the bank</summary><due>2030-01-15</due></task>"
+
+    (call,) = preview_cycle(CONFIG, tmp_path).calls
+
+    assert (call.action, call.kind, call.calendar_id, call.body["title"]) == ("insert", "task", "@default", "Call the bank")

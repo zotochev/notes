@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from notificator.calendars.dry_run import DryRunCalendar, PlannedCall
+from notificator.calendars.dry_run import DryRunCalendar, DryRunTasks, PlannedCall
 from notificator.config import STATE_FILE, Config
 from notificator.core.planning import too_many_deletes
 from notificator.store import Store
@@ -49,7 +49,9 @@ def preview_cycle(
             tracked_before = sum(store.event_counts().values())
             # Deletions are allowed so that they are listed; whether the real
             # cycle would hold them is worked out below, without a second pass.
-            report = SyncEngine(name, source, calendar, store, settings).run_cycle(allow_mass_delete=True)
+            report = SyncEngine(
+                name, source, calendar, store, settings, tasks=DryRunTasks(calendar.calls),
+            ).run_cycle(allow_mass_delete=True)
     needs_approval = too_many_deletes(
         report.deleted, tracked_before, settings.max_delete_ratio, settings.held_deletes_min
     )

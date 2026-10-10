@@ -54,6 +54,26 @@ class Source(Protocol):
         ...
 
 
+class Tasks(Protocol):
+    """Google Tasks. Unlike a calendar event, a task gets its id from the service."""
+
+    def insert(self, tasklist: str, body: dict[str, Any]) -> str:
+        """Create a task and return its id."""
+        ...
+
+    def update(self, tasklist: str, task_id: str, body: dict[str, Any]) -> None:
+        """Update an existing task. Raises EventNotFound, also when it was deleted in Google."""
+        ...
+
+    def delete(self, tasklist: str, task_id: str) -> None:
+        """Delete a task. Deleting a missing task is not an error."""
+        ...
+
+    def find(self, tasklist: str, marker: str) -> str | None:
+        """Return the id of the task whose notes begin with `marker`, or None."""
+        ...
+
+
 class Calendar(Protocol):
     def insert(self, calendar_id: str, event_id: str, body: dict[str, Any]) -> None:
         """Create an event with the given id. Raises EventAlreadyExists."""

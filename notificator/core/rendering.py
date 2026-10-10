@@ -7,11 +7,19 @@ from hashlib import sha256
 from pathlib import PurePosixPath
 from typing import Any
 
-from notificator.core.model import EventSpec
+from notificator.core.model import TASK, EventSpec
 
 
 def render_body(spec: EventSpec, path: str, link: str | None) -> dict[str, Any]:
-    """Build the event resource. Absent optional fields are sent explicitly so that a patch clears them."""
+    """Build the event or task resource. Absent optional fields are sent explicitly so that a patch clears them."""
+    if spec.kind == TASK:
+        return {
+            "title": spec.summary,
+            # Google Tasks shows notes as plain text and keeps only the date of `due`.
+            "notes": task_marker(spec.uid, path) + (f"link: {link}\n" if link else "") + "---\n"
+            + (spec.description or ""),
+            "due": f"{spec.start.date().isoformat()}T00:00:00.000Z" if spec.start else None,
+        }
     return {
         "summary": spec.summary,
         "description": _description(spec, path, link),
@@ -27,6 +35,11 @@ def fingerprint(body: dict[str, Any]) -> str:
     """Stable hash of a body: equal fingerprints mean the calendar needs no update."""
     canonical = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def task_marker(uid: str, path: str) -> str:
+    """How the notes of our task for this uid and file begin: enough to find the task again in its list."""
+    return f"uid: {uid}\nfile: {path}\n"
 
 
 def _description(spec: EventSpec, path: str, link: str | None) -> str:

@@ -24,18 +24,24 @@ import dateparser
 from dateutil.rrule import rrulestr
 from email_validator import EmailNotValidError, validate_email
 
-from notificator.core.model import EventSpec
+from notificator.core.model import TASK, EventSpec
 
 MAX_FRAGMENT_BYTES = 512_000
 
-_EVENT_RE = re.compile(r"(?s)<event\b[^>]*>(?:(?!<event\b).)*?</event>")
+# An <event> or <task> block that has no other such block inside it.
+_BLOCK_RE = re.compile(r"(?s)<(event|task)\b[^>]*>(?:(?!<(?:event|task)\b).)*?</\1>")
 _UID_RE = re.compile(r"^[A-Za-z0-9]+$")
 _UID_IN_FRAGMENT_RE = re.compile(r"<uid>\s*([A-Za-z0-9]+)\s*</uid>")
 _SCALAR_FIELDS = (
     "uid", "summary", "start", "end", "description",
-    "time_zone", "location", "recurrence", "calendar_id",
+    "time_zone", "location", "recurrence", "calendar_id", "due", "tasklist",
 )
-_CSV_REQUIRED = ("uid", "summary", "start")
+# What a task cannot have, and what an event cannot.
+_EVENT_ONLY_FIELDS = ("start", "end", "location", "recurrence", "attendees", "calendar_id")
+_TASK_ONLY_FIELDS = ("due", "tasklist")
+# A table is an events table when its header has these columns and one of the date columns.
+_CSV_REQUIRED = ("uid", "summary")
+_CSV_DATE_COLUMNS = ("start", "due")
 _CSV_DELIMITERS = (",", ";", "\t", "|")
 # A space is left out on purpose: titles and dates contain spaces.
 _CSV_NEVER_DELIMITERS = '_" '
@@ -102,16 +108,17 @@ def parse_file(path: str, content: str | bytes, ctx: ParseContext) -> ParseResul
 def parse_text(
     text: str, ctx: ParseContext, max_fragment_bytes: int = MAX_FRAGMENT_BYTES
 ) -> ParseResult:
-    """Extract `<event>` blocks from arbitrary text. Lines starting with `#` are ignored."""
+    """Extract `<event>` and `<task>` blocks from arbitrary text. Lines starting with `#` are ignored."""
     collector = _Collector()
-    for fragment in _EVENT_RE.findall(_strip_comments(text)):
+    for match in _BLOCK_RE.finditer(_strip_comments(text)):
+        fragment, kind = match.group(0), match.group(1)
         uid_hint = _uid_hint(fragment)
         if len(fragment.encode("utf-8", errors="ignore")) > max_fragment_bytes:
-            collector.fail(f"блок <event> больше {max_fragment_bytes} байт", uid_hint, fragment[:200])
+            collector.fail(f"блок <{kind}> больше {max_fragment_bytes} байт", uid_hint, fragment[:200])
             continue
         try:
             fields = _fragment_fields(fragment)
-            event = build_event(fields, ctx)
+            event = build_task(fields, ctx) if kind == TASK else build_event(fields, ctx)
         except EventError as e:
             collector.fail(str(e), uid_hint, fragment)
             continue
@@ -148,6 +155,11 @@ def parse_csv(text: str, ctx: ParseContext) -> ParseResult:
     return collector.result()
 
 
+def _is_events_header(names: list[str]) -> bool:
+    """True when a table's column names (already lower-case) make it an events table."""
+    return set(_CSV_REQUIRED) <= set(names) and any(column in names for column in _CSV_DATE_COLUMNS)
+
+
 def parse_xlsx(data: bytes, ctx: ParseContext) -> ParseResult:
     """Parse an Excel workbook: every sheet whose first row names the required columns is an events table.
 
@@ -171,7 +183,7 @@ def parse_xlsx(data: bytes, ctx: ParseContext) -> ParseResult:
 
     for title, rows in sheets:
         names = [_cell_text(cell).lower() for cell in (rows[0] if rows else ())]
-        if not set(_CSV_REQUIRED) <= set(names):
+        if not _is_events_header(names):
             continue
         for row_num, row in enumerate(rows[1:], start=2):
             values = {name: _cell_text(cell) for name, cell in zip(names, row) if name}
@@ -180,14 +192,23 @@ def parse_xlsx(data: bytes, ctx: ParseContext) -> ParseResult:
 
 
 def _add_table_row(collector: _Collector, values: dict[str, str], where: str, ctx: ParseContext) -> None:
-    """Turn one table row, keyed by lower-case column name, into an event or an issue."""
+    """Turn one table row, keyed by lower-case column name, into an event, a task or an issue.
+
+    A row with `due` and without `start` is a task; any other row is an event.
+    A table with no `start` column at all can only hold tasks.
+    """
     uid = values.get("uid", "")
     if not uid:
         return
     fields: dict[str, FieldValue] = {k: values[k] for k in _SCALAR_FIELDS if values.get(k)}
-    fields["attendees"] = _split_list(values.get("attendees", "").replace(",", ";"))
+    attendees = _split_list(values.get("attendees", "").replace(",", ";"))
+    if attendees:
+        fields["attendees"] = attendees
+    is_task = "start" not in values or (bool(values.get("due")) and not values.get("start"))
     try:
-        event = build_event(fields, ctx)
+        if values.get("due") and values.get("start"):
+            raise EventError("заполнены и start, и due: у события задаётся start, у задачи — due")
+        event = build_task(fields, ctx) if is_task else build_event(fields, ctx)
     except EventError as e:
         collector.fail(f"{where}{e}", uid if _UID_RE.match(uid) else None, None)
         return
@@ -222,7 +243,7 @@ def _csv_delimiter(text: str) -> str | None:
             names = next(csv.reader([header], delimiter=delimiter), [])
         except csv.Error:
             continue
-        if set(_CSV_REQUIRED) <= {name.strip().lower() for name in names}:
+        if _is_events_header([name.strip().lower() for name in names]):
             return delimiter
     return None
 
@@ -235,17 +256,10 @@ _BINARY_PARSERS_BY_SUFFIX = {".xlsx": parse_xlsx}
 
 def build_event(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpec:
     """Validate raw field values and build an EventSpec. Empty optional fields count as absent."""
-    uid = _scalar(fields, "uid")
-    if not uid:
-        raise EventError("не задан uid")
-    if not _UID_RE.match(uid):
-        raise EventError(f"uid {uid!r} должен состоять только из латинских букв и цифр")
-    summary = _scalar(fields, "summary")
-    if not summary:
-        raise EventError("не задан summary")
-
-    tz_name = _scalar(fields, "time_zone")
-    tz = _zone(tz_name) if tz_name else ctx.default_tz
+    uid, summary, tz = _common_fields(fields, ctx)
+    for name in _TASK_ONLY_FIELDS:
+        if fields.get(name):
+            raise EventError(f"у события не может быть {name}: это поле задачи (<task>)")
 
     start_text = _scalar(fields, "start")
     if not start_text:
@@ -269,6 +283,42 @@ def build_event(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpe
         recurrence=_rrule(recurrence) if recurrence else None,
         calendar_id=_scalar(fields, "calendar_id"),
     )
+
+
+def build_task(fields: Mapping[str, FieldValue], ctx: ParseContext) -> EventSpec:
+    """Validate raw field values and build the EventSpec of a task. Its due date is optional."""
+    uid, summary, tz = _common_fields(fields, ctx)
+    for name in _EVENT_ONLY_FIELDS:
+        if fields.get(name):
+            hint = "срок задаётся в due" if name in ("start", "end") else "это поле события"
+            raise EventError(f"у задачи не может быть {name}: {hint}")
+    due_text = _scalar(fields, "due")
+    # Google Tasks keeps only the date of a due time.
+    due = _parse_datetime(due_text, "due", tz, ctx).date() if due_text else None
+    return EventSpec(
+        uid=uid,
+        summary=summary,
+        start=datetime.combine(due, time(), tz) if due else None,
+        end=None,
+        time_zone=tz.key,
+        description=_scalar(fields, "description"),
+        calendar_id=_scalar(fields, "tasklist"),
+        kind=TASK,
+    )
+
+
+def _common_fields(fields: Mapping[str, FieldValue], ctx: ParseContext) -> tuple[str, str, ZoneInfo]:
+    """uid, summary and time zone: what an event and a task both have."""
+    uid = _scalar(fields, "uid")
+    if not uid:
+        raise EventError("не задан uid")
+    if not _UID_RE.match(uid):
+        raise EventError(f"uid {uid!r} должен состоять только из латинских букв и цифр")
+    summary = _scalar(fields, "summary")
+    if not summary:
+        raise EventError("не задан summary")
+    tz_name = _scalar(fields, "time_zone")
+    return uid, summary, _zone(tz_name) if tz_name else ctx.default_tz
 
 
 class _Collector:

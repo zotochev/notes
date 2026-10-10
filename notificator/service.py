@@ -17,10 +17,11 @@ from pathlib import Path
 from typing import Any
 
 from notificator.calendars.google import GoogleCalendar
+from notificator.calendars.google_tasks import GoogleTasks
 from notificator.config import STATE_FILE, Config
 from notificator.store import Store
 from notificator.sync.engine import CycleReport, SyncEngine
-from notificator.sync.ports import Calendar, CalendarUnavailable, Source
+from notificator.sync.ports import Calendar, CalendarUnavailable, Source, Tasks
 from notificator.wiring import build_source, google_auth, sync_settings
 
 logger = logging.getLogger(__name__)
@@ -33,13 +34,21 @@ class SyncService:
         data_dir: Path,
         source: Source | None = None,
         calendar_factory: Callable[[], Calendar] | None = None,
+        tasks_factory: Callable[[], Tasks | None] | None = None,
     ) -> None:
-        """`source` and `calendar_factory` replace the configured ones in tests."""
+        """`source`, `calendar_factory` and `tasks_factory` replace the configured ones in tests.
+
+        A replaced calendar without replaced tasks means no tasks service at all.
+        """
         self.source_name = config.active_source
         self._db_path = data_dir / STATE_FILE
         self._source = source or build_source(config.sources[config.active_source])
         self._calendar_factory = calendar_factory or (
             lambda: GoogleCalendar(google_auth(config, data_dir).credentials())
+        )
+        self._tasks_factory = tasks_factory or (
+            (lambda: None) if calendar_factory
+            else (lambda: GoogleTasks(google_auth(config, data_dir).credentials()))
         )
         self._settings = sync_settings(config)
         self._interval = config.scan_interval_sec
@@ -129,7 +138,8 @@ class SyncService:
         try:
             calendar = self._calendar_factory()
             return run(SyncEngine(
-                self.source_name, self._source, calendar, store, self._settings, on_progress=self._set_progress,
+                self.source_name, self._source, calendar, store, self._settings,
+                on_progress=self._set_progress, tasks=self._tasks_factory(),
             ))
         except CalendarUnavailable as e:
             return CycleReport(error=f"календарь недоступен: {e}")
