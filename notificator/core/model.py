@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 
 # The two kinds of things a file can ask for. An event is the default.
@@ -39,6 +39,8 @@ class TrackedEvent:
     # calendar state is unknown (a write was started but never confirmed).
     fingerprint: str | None
     kind: str = EVENT
+    # The due date of a task as it was last written, None when it had none.
+    due: date | None = None
 
 
 @dataclass(frozen=True, slots=True)

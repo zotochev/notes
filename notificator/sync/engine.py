@@ -400,8 +400,13 @@ class SyncEngine:
             # exist already. Find it instead of creating a second one.
             task_id = tasks.find(push.calendar_id, task_marker(push.key.uid, push.key.path)) or ""
         if task_id:
+            body = push.body
+            due = push.spec.start.date() if push.spec.start else None
+            if current is not None and due is not None and due != current.due:
+                # A new due date means the task is to be done again: untick it if it was ticked off.
+                body = {**body, "status": "needsAction", "completed": None}
             try:
-                tasks.update(push.calendar_id, task_id, push.body)
+                tasks.update(push.calendar_id, task_id, body)
             except EventNotFound:
                 # Deleted by hand in Google: make it again.
                 task_id = ""

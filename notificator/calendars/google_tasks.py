@@ -29,7 +29,7 @@ class GoogleTasks:
             raise _no_such_list(tasklist) from e
 
     def update(self, tasklist: str, task_id: str, body: dict[str, Any]) -> None:
-        """Change what we set and leave the rest, such as "completed", as it is. Raises EventNotFound."""
+        """Change the fields of `body` and leave the rest, such as "status", as it is. Raises EventNotFound."""
         task = self._execute(self._service.tasks().patch(tasklist=tasklist, task=task_id, body=body))
         if task.get("deleted"):
             # Deleted in Google: the task is kept for a while as a hidden stub.

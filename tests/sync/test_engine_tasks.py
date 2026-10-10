@@ -49,13 +49,39 @@ def test_changed_task_is_updated_in_place_and_stays_completed(world):
     world.sync()
     (key,) = world.tasks.tasks
     world.tasks.complete("Call the bank")
-    world.source.files["/a.md"] = task("t1", "Call the bank today", due="2030-02-01")
+    world.source.files["/a.md"] = task("t1", "Call the bank today", description="ask about the card")
 
     world.sync()
 
     assert list(world.tasks.tasks) == [key]
     body = world.tasks.tasks[key]
-    assert (body["title"], body["due"], body["status"]) == ("Call the bank today", "2030-02-01T00:00:00.000Z", "completed")
+    assert (body["title"], body["status"]) == ("Call the bank today", "completed")
+
+
+@pytest.mark.parametrize("before", ["2030-01-15", None])
+def test_new_due_date_makes_a_completed_task_active_again(world, before):
+    world.source.files["/a.md"] = task("t1", "Call the bank", due=before)
+    world.sync()
+    (key,) = world.tasks.tasks
+    world.tasks.complete("Call the bank")
+    world.source.files["/a.md"] = task("t1", "Call the bank", due="2030-02-01")
+
+    world.sync()
+
+    body = world.tasks.tasks[key]
+    assert (body["due"], body["status"], body["completed"]) == ("2030-02-01T00:00:00.000Z", "needsAction", None)
+
+
+def test_losing_the_due_date_leaves_a_completed_task_completed(world):
+    world.source.files["/a.md"] = task("t1", "Call the bank")
+    world.sync()
+    world.tasks.complete("Call the bank")
+    world.source.files["/a.md"] = task("t1", "Call the bank", due=None)
+
+    world.sync()
+
+    (body,) = world.tasks.tasks.values()
+    assert (body["due"], body["status"]) == (None, "completed")
 
 
 def test_task_may_have_no_due_date_and_losing_it_clears_it_in_google(world):

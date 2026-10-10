@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from notificator.core.model import EventKey, EventSpec, TrackedEvent
+from notificator.core.model import TASK, EventKey, EventSpec, TrackedEvent
 
 _SETUP_LOCK = threading.Lock()
 _SCHEMA_VERSION = 2
@@ -151,13 +151,15 @@ class Store:
     def tracked(self, source: str) -> dict[str, dict[str, TrackedEvent]]:
         """Tracked events of one source, keyed by path, then uid."""
         rows = self._db.execute(
-            "SELECT path, uid, gcal_event_id, calendar_id, fingerprint, kind FROM events WHERE source = ?",
+            "SELECT path, uid, gcal_event_id, calendar_id, fingerprint, kind, spec FROM events WHERE source = ?",
             (source,),
         )
         result: dict[str, dict[str, TrackedEvent]] = {}
-        for path, uid, gcal_event_id, calendar_id, fp, kind in rows:
+        for path, uid, gcal_event_id, calendar_id, fp, kind, spec in rows:
+            start = json.loads(spec).get("start") if kind == TASK else None
             result.setdefault(path, {})[uid] = TrackedEvent(
-                EventKey(source, path, uid), gcal_event_id, calendar_id, fp, kind
+                EventKey(source, path, uid), gcal_event_id, calendar_id, fp, kind,
+                datetime.fromisoformat(start).date() if start else None,
             )
         return result
 
