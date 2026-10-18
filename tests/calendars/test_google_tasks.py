@@ -28,6 +28,23 @@ def test_insert_into_a_missing_list_names_the_list():
         service.insert("work", BODY)
 
 
+@pytest.mark.parametrize("method", ["insert", "find"])
+def test_text_that_is_not_a_list_id_is_a_missing_list(method):
+    # Google answers 400 instead of 404 when the id is malformed, e.g. the list's title.
+    service, _ = tasks(error(400, message="Invalid task list ID"))
+
+    with pytest.raises(TaskListNotFound, match="список задач 'Работа' не найден.*идентификатор"):
+        getattr(service, method)("Работа", BODY if method == "insert" else "uid: t1\nfile: /a.md\n")
+
+
+def test_other_bad_requests_are_not_a_missing_list():
+    service, _ = tasks(error(400, message="Invalid value for due"))
+
+    with pytest.raises(CalendarError) as raised:
+        service.insert("@default", BODY)
+    assert not isinstance(raised.value, TaskListNotFound)
+
+
 def test_looking_for_a_task_in_a_missing_list_names_the_list_too():
     service, _ = tasks(error(404, message="Task list not found"))
 

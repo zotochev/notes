@@ -24,9 +24,11 @@ class GoogleTasks:
         """Create a task and return the id Google gave it."""
         try:
             return self._execute(self._service.tasks().insert(tasklist=tasklist, body=body))["id"]
-        except EventNotFound as e:
+        except CalendarError as e:
             # A new task cannot be "not found": it is the list that is missing.
-            raise _no_such_list(tasklist) from e
+            if _is_missing_list(e):
+                raise _no_such_list(tasklist) from e
+            raise
 
     def update(self, tasklist: str, task_id: str, body: dict[str, Any]) -> None:
         """Change the fields of `body` and leave the rest, such as "status", as it is. Raises EventNotFound."""
@@ -53,8 +55,10 @@ class GoogleTasks:
                 page = self._execute(self._service.tasks().list(
                     tasklist=tasklist, pageToken=page_token, maxResults=100, showCompleted=True, showHidden=True,
                 ))
-            except EventNotFound as e:
-                raise _no_such_list(tasklist) from e
+            except CalendarError as e:
+                if _is_missing_list(e):
+                    raise _no_such_list(tasklist) from e
+                raise
             for task in page.get("items", []):
                 if (task.get("notes") or "").startswith(marker) and not task.get("deleted"):
                     return task["id"]
@@ -86,6 +90,15 @@ class GoogleTasks:
                     f"и войдите в Google заново через админку ({e})"
                 ) from e
             raise
+
+
+def _is_missing_list(error: CalendarError) -> bool:
+    """True when Google says there is no such task list.
+
+    A well-formed id of a list that does not exist gives 404; text that cannot
+    be a list id at all, such as the list's title, gives 400 "Invalid task list ID".
+    """
+    return isinstance(error, EventNotFound) or ("HTTP 400" in str(error) and "task list" in str(error).lower())
 
 
 def _no_such_list(tasklist: str) -> TaskListNotFound:
